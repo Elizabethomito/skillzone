@@ -7,7 +7,7 @@ Go + SQLite REST API for the Skillzone PWA.
 | Layer | Technology |
 |---|---|
 | Language | Go 1.24 |
-| Database | SQLite (via `go-sqlite3`) |
+| Database | SQLite (via `modernc.org/sqlite` — pure Go, no CGo) |
 | Auth | HS256 JWT (`golang-jwt/jwt/v5`) |
 | Passwords | bcrypt (`golang.org/x/crypto`) |
 | IDs | UUID v4 (`google/uuid`) |
@@ -36,7 +36,8 @@ backend/
 cd backend
 
 # Optional environment variables (defaults shown)
-export DATABASE_URL="skillzone.db?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000"
+# modernc.org/sqlite uses _pragma=KEY(VALUE) syntax (not _foreign_keys=on)
+export DATABASE_URL="skillzone.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 export JWT_SECRET="changeme-use-a-real-secret-in-production"
 export ADDR=":8080"
 

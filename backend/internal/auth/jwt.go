@@ -1,4 +1,23 @@
 // Package auth provides JWT token generation and validation.
+//
+// ────────────────────────────────────────────────────────────────────
+// LEARNING NOTE — what is a JWT?
+// ────────────────────────────────────────────────────────────────────
+// A JSON Web Token (JWT) is a compact, self-contained way to represent
+// claims (assertions) between two parties. It has three Base64-encoded
+// sections separated by dots:
+//
+//   HEADER.PAYLOAD.SIGNATURE
+//
+// The HEADER says which algorithm was used (HS256 here).
+// The PAYLOAD carries our custom claims (user_id, role) plus standard
+// ones (expiry, issued-at).
+// The SIGNATURE is an HMAC-SHA256 hash of HEADER+PAYLOAD using a secret
+// key only the server knows. Tampering with the payload invalidates the
+// signature, so the server can trust the claims without a database lookup
+// on every request.
+//
+// Useful resource: https://jwt.io/introduction
 package auth
 
 import (
@@ -10,15 +29,22 @@ import (
 )
 
 // Claims are the JWT claims embedded in each token.
+// We embed jwt.RegisteredClaims to get standard fields (ExpiresAt,
+// IssuedAt) for free.
 type Claims struct {
 	UserID string `json:"user_id"`
 	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
 
+// tokenDuration is how long a token stays valid after being issued.
+// 72 hours means users stay logged in across the hackathon demo days
+// without needing to re-authenticate.
 const tokenDuration = 72 * time.Hour
 
 // GenerateToken creates a signed JWT for the given user.
+// The token is signed with HS256 (HMAC-SHA256) using the server secret.
+// Anyone with the secret can verify the token — keep it out of git!
 func GenerateToken(userID, role, secret string) (string, error) {
 	claims := Claims{
 		UserID: userID,
@@ -37,8 +63,13 @@ func GenerateToken(userID, role, secret string) (string, error) {
 }
 
 // ParseToken validates a JWT string and returns the embedded claims.
+// It rejects tokens with:
+//   - wrong or missing signature
+//   - expired tokens (ExpiresAt in the past)
+//   - unexpected signing algorithm (algorithm confusion attack prevention)
 func ParseToken(tokenStr, secret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
+		// Guard against "alg:none" or RS256 tokens being passed to an HS256 server.
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
