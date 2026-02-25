@@ -58,27 +58,27 @@ const (
 	SeedBarakaID  = "seed-baraka-00000000-0000-0000-0000-000000000003"
 
 	// Skills
-	SeedSkillPythonID      = "seed-skill-python--0000-0000-0000-000000000010"
-	SeedSkillDataSciID     = "seed-skill-datasci-0000-0000-0000-000000000011"
-	SeedSkillOpenSourceID  = "seed-skill-oss----0000-0000-0000-000000000012"
-	SeedSkillCloudID       = "seed-skill-cloud--0000-0000-0000-000000000013"
-	SeedSkillMobileID      = "seed-skill-mobile-0000-0000-0000-000000000014"
-	SeedSkillCyberID       = "seed-skill-cyber--0000-0000-0000-000000000015"
-	SeedSkillAIDevID       = "seed-skill-aidev--0000-0000-0000-000000000016"
-	SeedSkillPromptID      = "seed-skill-prompt-0000-0000-0000-000000000017"
-	SeedSkillAIProdMgmtID  = "seed-skill-aiprod-0000-0000-0000-000000000018"
+	SeedSkillPythonID     = "seed-skill-python--0000-0000-0000-000000000010"
+	SeedSkillDataSciID    = "seed-skill-datasci-0000-0000-0000-000000000011"
+	SeedSkillOpenSourceID = "seed-skill-oss----0000-0000-0000-000000000012"
+	SeedSkillCloudID      = "seed-skill-cloud--0000-0000-0000-000000000013"
+	SeedSkillMobileID     = "seed-skill-mobile-0000-0000-0000-000000000014"
+	SeedSkillCyberID      = "seed-skill-cyber--0000-0000-0000-000000000015"
+	SeedSkillAIDevID      = "seed-skill-aidev--0000-0000-0000-000000000016"
+	SeedSkillPromptID     = "seed-skill-prompt-0000-0000-0000-000000000017"
+	SeedSkillAIProdMgmtID = "seed-skill-aiprod-0000-0000-0000-000000000018"
 
 	// Past events
-	SeedEventPythonID    = "seed-event-python-0000-0000-0000-000000000020"
-	SeedEventDataSciID   = "seed-event-datasi-0000-0000-0000-000000000021"
-	SeedEventHackID      = "seed-event-hack---0000-0000-0000-000000000022"
-	SeedEventCloudID     = "seed-event-cloud--0000-0000-0000-000000000023"
-	SeedEventMobileID    = "seed-event-mobile-0000-0000-0000-000000000024"
-	SeedEventCyberID     = "seed-event-cyber--0000-0000-0000-000000000025"
+	SeedEventPythonID  = "seed-event-python-0000-0000-0000-000000000020"
+	SeedEventDataSciID = "seed-event-datasi-0000-0000-0000-000000000021"
+	SeedEventHackID    = "seed-event-hack---0000-0000-0000-000000000022"
+	SeedEventCloudID   = "seed-event-cloud--0000-0000-0000-000000000023"
+	SeedEventMobileID  = "seed-event-mobile-0000-0000-0000-000000000024"
+	SeedEventCyberID   = "seed-event-cyber--0000-0000-0000-000000000025"
 
 	// Active + upcoming
-	SeedEventAIWorkshopID  = "seed-event-aiwork-0000-0000-0000-000000000030"
-	SeedEventInternshipID  = "seed-event-intern-0000-0000-0000-000000000031"
+	SeedEventAIWorkshopID = "seed-event-aiwork-0000-0000-0000-000000000030"
+	SeedEventInternshipID = "seed-event-intern-0000-0000-0000-000000000031"
 
 	// Check-in code for the active workshop — the host will embed this in the QR.
 	SeedAIWorkshopCheckInCode = "DEMO-CHECKIN-CODE-AI-WORKSHOP-2026"
