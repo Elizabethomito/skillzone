@@ -10,12 +10,33 @@
 // independent packages (db, handlers, middleware) are wired together.
 // Keeping this wiring in main.go means every other package stays easy
 // to test in isolation (they never import each other in a circle).
+//
+// LOGGING
+// We use log/slog (stdlib, Go 1.21+) as the structured logger.
+// In a terminal tint wraps it with ANSI colour codes so each log level
+// gets a distinct colour (DEBUG=grey, INFO=green, WARN=yellow, ERROR=red).
+// tint.NewHandler detects whether stdout is a real TTY; colour is
+// automatically suppressed when the output is piped or redirected so log
+// files stay clean.
+//
+// GRACEFUL SHUTDOWN
+// http.Server.Shutdown drains in-flight requests before closing.  We
+// listen for SIGINT / SIGTERM on a channel, trigger Shutdown in a
+// goroutine, and wait for it to finish before main() returns.  This
+// means the database deferred close always runs and no request is cut
+// off mid-flight.
 package main
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/lmittmann/tint"
 
 	"github.com/Elizabethomito/skillzone/backend/internal/db"
 	"github.com/Elizabethomito/skillzone/backend/internal/handlers"
@@ -23,6 +44,20 @@ import (
 )
 
 func main() {
+	// ── Logger ───────────────────────────────────────────────────────
+	// tint.NewHandler wraps slog with ANSI colour codes when stdout is a
+	// real TTY; it falls back to plain text when piped / redirected so
+	// log files stay machine-readable.
+	//   DEBUG → grey    INFO → green    WARN → yellow    ERROR → red
+	logger := slog.New(tint.NewHandler(os.Stdout, &tint.Options{
+		Level:      slog.LevelDebug,
+		TimeFormat: time.Kitchen, // e.g. "3:04PM" — compact for a dev terminal
+		NoColor:    !isatty(os.Stdout),
+	}))
+	// Replace the global logger so any package that calls slog.Info(…)
+	// also uses the coloured handler.
+	slog.SetDefault(logger)
+
 	// ── Configuration ────────────────────────────────────────────────
 	// Read settings from the environment so the same binary can be used
 	// in development, CI, and production without recompiling.
@@ -41,7 +76,8 @@ func main() {
 	// TABLE IF NOT EXISTS migrations automatically.
 	database, err := db.Open(dsn)
 	if err != nil {
-		log.Fatalf("open database: %v", err)
+		slog.Error("open database", "err", err)
+		os.Exit(1)
 	}
 	defer database.Close()
 
@@ -108,12 +144,48 @@ func main() {
 	mux.Handle("GET /api/users/me/registrations",
 		auth(onlyStudent(http.HandlerFunc(srv.GetMyRegistrations))))
 
-	// Wrap the entire mux in CORS so browser PWA requests are allowed.
-	handler := middleware.CORS(mux)
+	// Wrap the entire mux in CORS and the request logger so every
+	// request is printed: method, path, status, latency.
+	handler := middleware.CORS(requestLogger(mux))
 
-	log.Printf("Skillzone API listening on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
-		log.Fatalf("server: %v", err)
+	// ── HTTP server ───────────────────────────────────────────────────
+	// Populate http.Server explicitly so we can call Shutdown() on it
+	// during graceful shutdown.  The timeouts protect against slow
+	// clients hogging connections in production.
+	httpSrv := &http.Server{
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// ── Graceful shutdown ─────────────────────────────────────────────
+	// We start the server in a goroutine so main() can block on the
+	// signal channel.  When SIGINT or SIGTERM arrives we give in-flight
+	// requests up to 10 s to finish before forcefully closing.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		slog.Info("Skillzone API started", "addr", addr)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until a signal is received.
+	sig := <-quit
+	slog.Info("shutdown signal received", "signal", sig)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		slog.Error("graceful shutdown failed", "err", err)
+	} else {
+		slog.Info("server stopped cleanly")
 	}
 }
 
@@ -124,4 +196,60 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// isatty reports whether f is connected to an interactive terminal.
+// Used to decide whether to emit ANSI colour codes — we skip them when
+// stdout is a pipe or a file so logs stay clean for tools like grep.
+func isatty(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	// A character device whose name contains "tty" or whose mode has
+	// ModeCharDevice set is an interactive terminal.
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// responseWriter wraps http.ResponseWriter to capture the status code
+// written by a handler so the request logger can record it.
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// requestLogger is an HTTP middleware that logs every request using
+// the global slog logger.  It records:
+//   - HTTP method and path
+//   - Response status code (colour-coded by tint based on level)
+//   - Latency (wall-clock time the handler took)
+//
+// 2xx/3xx → INFO   4xx → WARN   5xx → ERROR
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		latency := time.Since(start)
+
+		level := slog.LevelInfo
+		switch {
+		case rw.status >= 500:
+			level = slog.LevelError
+		case rw.status >= 400:
+			level = slog.LevelWarn
+		}
+
+		slog.Log(r.Context(), level, "request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"latency", latency,
+		)
+	})
 }
