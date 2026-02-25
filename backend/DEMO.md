@@ -308,35 +308,6 @@ Slow network simulation: **Network** tab → **Slow 3G** preset.
 
 ---
 
-## New API endpoints added for this demo
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/api/admin/seed` | — | Load all demo fixture data (idempotent) |
-| `PATCH` | `/api/events/{id}/status` | company (host only) | Transition event: `upcoming` → `active` → `completed` |
-| `GET` | `/api/events/{id}/registrations` | company (host only) | Attendee list with name, email, registration status |
-| `PATCH` | `/api/events/{id}/registrations/{reg_id}` | company (host only) | Resolve conflict: `{"action":"confirm"}` or `{"action":"waitlist"}` |
-
-### How the internship slot model works
-
-Events have optional `capacity` and `slots_remaining` fields (both `null` = unlimited).
-
-```
-capacity: 2, slots_remaining: 1
-```
-
-When a registration arrives and `slots_remaining == 0`:
-1. The registration is recorded as `status: "conflict_pending"`.
-2. `slots_remaining` is **not** decremented (the host decides whether to expand).
-3. The host sees it in `GET /api/events/{id}/registrations`.
-4. The host calls `PATCH` to confirm or waitlist.
-
-The attendance sync (`POST /api/sync/attendance`) also runs this same slot
-logic — scanning a QR code auto-registers the student, applying the same
-capacity checks.
-
----
-
 ## Troubleshooting
 
 **Other devices can't connect**
