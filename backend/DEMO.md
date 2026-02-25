@@ -80,7 +80,6 @@ The response includes the event IDs you'll need below:
 {
   "active_workshop": {
     "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
-    "check_in_code": "DEMO-CHECKIN-CODE-AI-WORKSHOP-2026",
     "title": "Building Apps with AI Workshop"
   },
   "internship": {
@@ -97,7 +96,6 @@ Save the IDs in environment variables for the curl snippets below:
 BASE=http://localhost:8080
 WORKSHOP_ID=seed-event-aiwork-0000-0000-0000-000000000030
 INTERN_ID=seed-event-intern-0000-0000-0000-000000000031
-CHECKIN_CODE=DEMO-CHECKIN-CODE-AI-WORKSHOP-2026
 
 COMPANY_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
   -H "Content-Type: application/json" \
@@ -146,17 +144,29 @@ curl -s $BASE/api/events/$WORKSHOP_ID/checkin-code \
   -H "Authorization: Bearer $COMPANY_TOKEN" | jq .
 ```
 
-The frontend renders this as a QR code containing:
+Response:
 
 ```json
 {
   "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
-  "host_sig": "DEMO-CHECKIN-CODE-AI-WORKSHOP-2026",
-  "timestamp": <unix_now>
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expires_in_seconds": 21600
 }
 ```
 
-Display this QR on the projector screen.
+The `token` is a signed JWT that is valid for **6 hours** — that's the
+**scan window**. The frontend renders the JSON `{"token":"<jwt>"}` as a QR
+code on the projector screen. Students who scan during this window hold a
+token they can sync at any time in the future (see Scene 7).
+
+Save the token so you can use it in the manual sync curl:
+
+```bash
+CHECKIN_TOKEN=$(curl -s $BASE/api/events/$WORKSHOP_ID/checkin-code \
+  -H "Authorization: Bearer $COMPANY_TOKEN" | jq -r .token)
+```
+
+Display the QR on the projector screen.
 
 ### Scene 4 — Network drops
 
@@ -184,11 +194,14 @@ PWA queues the registration locally with status `PENDING`. Only 1 slot remains.
 
 Re-enable the network. The service worker's Background Sync fires automatically.
 
+> **Key point to explain:** Amara and Baraka scanned the QR while it was live.
+> Their tokens were signed by the server at that moment. Even if they sync
+> hours or days later, the server accepts the tokens — it verifies the
+> **signature**, not the expiry.
+
 To demo manually with curl:
 
 ```bash
-NOW=$(date +%s)
-
 # ── Amara syncs her workshop check-in ──────────────────────────────────────
 curl -s -X POST $BASE/api/sync/attendance \
   -H "Authorization: Bearer $AMARA_TOKEN" \
@@ -196,7 +209,7 @@ curl -s -X POST $BASE/api/sync/attendance \
   -d "{\"records\":[{
     \"local_id\":\"amara-local-001\",
     \"event_id\":\"$WORKSHOP_ID\",
-    \"payload\":\"{\\\"event_id\\\":\\\"$WORKSHOP_ID\\\",\\\"host_sig\\\":\\\"$CHECKIN_CODE\\\",\\\"timestamp\\\":$NOW}\"
+    \"payload\":\"{\\\"token\\\":\\\"$CHECKIN_TOKEN\\\"}\"
   }]}" | jq .
 
 # Amara applies for the internship (gets the last slot)
@@ -210,7 +223,7 @@ curl -s -X POST $BASE/api/sync/attendance \
   -d "{\"records\":[{
     \"local_id\":\"baraka-local-001\",
     \"event_id\":\"$WORKSHOP_ID\",
-    \"payload\":\"{\\\"event_id\\\":\\\"$WORKSHOP_ID\\\",\\\"host_sig\\\":\\\"$CHECKIN_CODE\\\",\\\"timestamp\\\":$NOW}\"
+    \"payload\":\"{\\\"token\\\":\\\"$CHECKIN_TOKEN\\\"}\"
   }]}" | jq .
 
 # Baraka applies for the internship (slot gone → conflict_pending)
@@ -277,10 +290,6 @@ curl -s -X PATCH $BASE/api/events/$WORKSHOP_ID/status \
   -d '{"status":"completed"}' | jq .
 ```
 
-> Attendance syncs within 24 hours of the QR timestamp are still accepted
-> after the event is completed — students who left before reconnecting can
-> still sync from home.
-
 ---
 
 ## Showing offline mode in Chrome DevTools
@@ -299,41 +308,15 @@ Slow network simulation: **Network** tab → **Slow 3G** preset.
 
 | Scenario | How to trigger | Expected result |
 |---|---|---|
-| Wrong QR code | Change `host_sig` in payload | `rejected: invalid check-in signature` |
-| Stale QR (>24 h) | Set `timestamp` to yesterday | `rejected: check-in payload has expired` |
+| Wrong QR token | Use a token signed with a different secret | `rejected: invalid check-in token: ...` |
+| Tampered token | Edit any character in the token string | `rejected: invalid check-in token: ...` |
+| Token from wrong event | Use `$CHECKIN_TOKEN` with a different `event_id` | `rejected: token event_id does not match record event_id` |
+| Missing token | Send `payload: "{}"` | `rejected: payload missing token` |
+| Stale QR scanned late | Token exp is in the past — server still accepts | `verified` (sync window is unlimited) |
 | Double-sync retry | Call sync twice, same `local_id` | Second call returns `verified` — idempotent |
 | Two offline internship applicants | Run Scenes 6 + 7 | First = confirmed, second = conflict_pending |
 | Host waitlists applicant | Use `"action":"waitlist"` | Status becomes `waitlisted` |
 | Server down during sync | Stop server, scan QR, restart, re-sync | Sync succeeds on reconnect |
-
----
-
-## New API endpoints added for this demo
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/api/admin/seed` | — | Load all demo fixture data (idempotent) |
-| `PATCH` | `/api/events/{id}/status` | company (host only) | Transition event: `upcoming` → `active` → `completed` |
-| `GET` | `/api/events/{id}/registrations` | company (host only) | Attendee list with name, email, registration status |
-| `PATCH` | `/api/events/{id}/registrations/{reg_id}` | company (host only) | Resolve conflict: `{"action":"confirm"}` or `{"action":"waitlist"}` |
-
-### How the internship slot model works
-
-Events have optional `capacity` and `slots_remaining` fields (both `null` = unlimited).
-
-```
-capacity: 2, slots_remaining: 1
-```
-
-When a registration arrives and `slots_remaining == 0`:
-1. The registration is recorded as `status: "conflict_pending"`.
-2. `slots_remaining` is **not** decremented (the host decides whether to expand).
-3. The host sees it in `GET /api/events/{id}/registrations`.
-4. The host calls `PATCH` to confirm or waitlist.
-
-The attendance sync (`POST /api/sync/attendance`) also runs this same slot
-logic — scanning a QR code auto-registers the student, applying the same
-capacity checks.
 
 ---
 

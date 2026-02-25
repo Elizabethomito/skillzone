@@ -224,13 +224,28 @@ type SyncResult struct {
 
 // CheckInPayload is the structure embedded in the host's QR code.
 //
-// Security model:
-//   - EventID ties the QR to a specific event.
-//   - HostSig is the server-generated check_in_code (shared secret). A student
-//     can only produce a valid payload if they physically scanned the host's QR.
-//   - Timestamp lets the server reject stale payloads (>24 h old).
+// Security model (v2 — signed token):
+//   - Token is a short-lived JWT (6 h) signed with the server secret.
+//   - The JWT carries event_id and host_sig claims inside its payload.
+//   - A student can only produce a valid payload if they scanned the host's
+//     QR while it was live — the JWT's exp enforces the scan window.
+//   - The student's sync can happen at ANY time after scanning; the server
+//     verifies the JWT signature (was it signed by us?) but does NOT
+//     re-check whether the token is still "fresh" at sync time.
+//     This lets students with poor connectivity sync days later.
+//
+// Migration note: the legacy fields EventID, HostSig, and Timestamp are
+// retained as omitempty so that clients on the old format get a clear
+// rejection rather than a panic.
 type CheckInPayload struct {
-	EventID   string `json:"event_id"`
-	HostSig   string `json:"host_sig"`
-	Timestamp int64  `json:"timestamp"` // Unix seconds (UTC)
+	// Token is the signed JWT produced by GET /api/events/{id}/checkin-code.
+	// This is the only field the server validates. Presence of the other
+	// fields is optional and only used by legacy clients.
+	Token string `json:"token"`
+
+	// Deprecated legacy fields — ignored by the server but kept so old
+	// clients fail gracefully with "missing token" rather than a crash.
+	EventID   string `json:"event_id,omitempty"`
+	HostSig   string `json:"host_sig,omitempty"`
+	Timestamp int64  `json:"timestamp,omitempty"`
 }

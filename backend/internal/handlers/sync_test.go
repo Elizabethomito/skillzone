@@ -8,8 +8,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elizabethomito/skillzone/backend/internal/auth"
 	"github.com/Elizabethomito/skillzone/backend/internal/models"
 )
+
+// makeCheckInPayload builds a valid CheckInPayload JSON string for testing.
+// It generates a signed check-in token using the test server's secret.
+func makeCheckInPayload(t *testing.T, eventID, checkInCode, secret string) string {
+	t.Helper()
+	token, err := auth.GenerateCheckInToken(eventID, checkInCode, secret)
+	if err != nil {
+		t.Fatalf("makeCheckInPayload: %v", err)
+	}
+	return fmt.Sprintf(`{"token":%q}`, token)
+}
 
 func TestSyncAttendance_Success(t *testing.T) {
 	srv := newTestServer(t)
@@ -24,10 +36,7 @@ func TestSyncAttendance_Success(t *testing.T) {
 		t.Fatalf("link skill: %v", err)
 	}
 
-	payload := fmt.Sprintf(
-		`{"event_id":%q,"host_sig":%q,"timestamp":%d}`,
-		eventID, checkInCode, time.Now().Unix(),
-	)
+	payload := makeCheckInPayload(t, eventID, checkInCode, testSecret)
 	localID := "local-001"
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
@@ -66,12 +75,11 @@ func TestSyncAttendance_InvalidSignature(t *testing.T) {
 	srv := newTestServer(t)
 	companyID := seedCompanyUser(t, srv)
 	studentID := seedStudentUser(t, srv)
-	eventID, _ := seedEvent(t, srv, companyID)
+	eventID, checkInCode := seedEvent(t, srv, companyID)
 
-	payload := fmt.Sprintf(
-		`{"event_id":%q,"host_sig":"wrong-code","timestamp":%d}`,
-		eventID, time.Now().Unix(),
-	)
+	// Build a token signed with the WRONG secret — simulates a forged QR.
+	badToken, _ := auth.GenerateCheckInToken(eventID, checkInCode, "wrong-secret")
+	payload := fmt.Sprintf(`{"token":%q}`, badToken)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
 		Records: []models.AttendanceSyncRecord{
@@ -98,10 +106,7 @@ func TestSyncAttendance_Idempotent(t *testing.T) {
 	studentID := seedStudentUser(t, srv)
 	eventID, checkInCode := seedEvent(t, srv, companyID)
 
-	payload := fmt.Sprintf(
-		`{"event_id":%q,"host_sig":%q,"timestamp":%d}`,
-		eventID, checkInCode, time.Now().Unix(),
-	)
+	payload := makeCheckInPayload(t, eventID, checkInCode, testSecret)
 	syncReq := models.SyncAttendanceRequest{
 		Records: []models.AttendanceSyncRecord{
 			{LocalID: "local-003", EventID: eventID, Payload: payload},
@@ -126,22 +131,64 @@ func TestSyncAttendance_Idempotent(t *testing.T) {
 	}
 }
 
-func TestSyncAttendance_ExpiredPayload(t *testing.T) {
+// TestSyncAttendance_TokenExpiredButSyncedLate verifies the core design:
+// a token whose exp has passed is still accepted at sync time because the
+// server only checks the JWT signature, not the expiry, during sync.
+// The exp only matters at scan time (i.e. when the host's QR was live).
+func TestSyncAttendance_TokenExpiredButSyncedLate(t *testing.T) {
 	srv := newTestServer(t)
 	companyID := seedCompanyUser(t, srv)
 	studentID := seedStudentUser(t, srv)
 	eventID, checkInCode := seedEvent(t, srv, companyID)
 
-	// Payload timestamp is 25 hours ago
-	staleTime := time.Now().Add(-25 * time.Hour).Unix()
-	payload := fmt.Sprintf(
-		`{"event_id":%q,"host_sig":%q,"timestamp":%d}`,
-		eventID, checkInCode, staleTime,
+	// Manually build a token that expired 1 week ago — simulates a student
+	// who scanned the QR during the live window but only connects now.
+	// We sign it with the correct secret so the signature is valid.
+	expiredToken, err := auth.GenerateCheckInTokenWithExpiry(
+		eventID, checkInCode, testSecret,
+		time.Now().Add(-7*24*time.Hour),                                // iat in the past
+		time.Now().Add(-7*24*time.Hour).Add(auth.CheckInTokenDuration), // exp also in the past
 	)
+	if err != nil {
+		t.Fatalf("GenerateCheckInTokenWithExpiry: %v", err)
+	}
+
+	payload := fmt.Sprintf(`{"token":%q}`, expiredToken)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
+		Records: []models.AttendanceSyncRecord{
+			{LocalID: "local-late", EventID: eventID, Payload: payload},
+		},
+	}))
+	req = ctxWithUser(req, studentID, "student")
+	rec := httptest.NewRecorder()
+	srv.SyncAttendance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp models.SyncAttendanceResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
+	// Must be ACCEPTED — signature is valid, sync is just late.
+	if resp.Results[0].Status != models.AttendanceVerified {
+		t.Errorf("expected verified for late sync, got %q: %s", resp.Results[0].Status, resp.Results[0].Message)
+	}
+}
+
+// TestSyncAttendance_WrongSecret verifies that a token signed by a different
+// server (or a tampered token) is rejected even if the exp hasn't passed.
+func TestSyncAttendance_WrongSecret(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, checkInCode := seedEvent(t, srv, companyID)
+
+	// Token issued by a "different server" — wrong signing secret.
+	foreignToken, _ := auth.GenerateCheckInToken(eventID, checkInCode, "different-server-secret")
+	payload := fmt.Sprintf(`{"token":%q}`, foreignToken)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
 		Records: []models.AttendanceSyncRecord{
-			{LocalID: "local-004", EventID: eventID, Payload: payload},
+			{LocalID: "local-foreign", EventID: eventID, Payload: payload},
 		},
 	}))
 	req = ctxWithUser(req, studentID, "student")
@@ -151,7 +198,7 @@ func TestSyncAttendance_ExpiredPayload(t *testing.T) {
 	var resp models.SyncAttendanceResponse
 	json.NewDecoder(rec.Body).Decode(&resp)
 	if resp.Results[0].Status != models.AttendanceRejected {
-		t.Errorf("expected rejected for stale payload, got %q", resp.Results[0].Status)
+		t.Errorf("expected rejected for foreign-signed token, got %q", resp.Results[0].Status)
 	}
 }
 
@@ -164,7 +211,7 @@ func TestGetMySkills(t *testing.T) {
 	srv.DB.Exec(`INSERT INTO event_skills (event_id, skill_id) VALUES (?, ?)`, eventID, skillID)
 
 	// Sync attendance to award skill
-	payload := fmt.Sprintf(`{"event_id":%q,"host_sig":%q,"timestamp":%d}`, eventID, checkInCode, time.Now().Unix())
+	payload := makeCheckInPayload(t, eventID, checkInCode, testSecret)
 	syncReq := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
 		Records: []models.AttendanceSyncRecord{{LocalID: "local-005", EventID: eventID, Payload: payload}},
 	}))
@@ -201,7 +248,7 @@ func TestSyncAutoRegisters(t *testing.T) {
 		t.Fatal("expected no prior registration")
 	}
 
-	payload := fmt.Sprintf(`{"event_id":%q,"host_sig":%q,"timestamp":%d}`, eventID, checkInCode, time.Now().Unix())
+	payload := makeCheckInPayload(t, eventID, checkInCode, testSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
 		Records: []models.AttendanceSyncRecord{{LocalID: "local-auto", EventID: eventID, Payload: payload}},
 	}))
@@ -242,7 +289,7 @@ func TestSyncAutoRegisters_ConflictWhenFull(t *testing.T) {
 	srv.RegisterForEvent(httptest.NewRecorder(), req1)
 
 	// Student2 syncs an offline QR scan.
-	payload := fmt.Sprintf(`{"event_id":%q,"host_sig":%q,"timestamp":%d}`, eventID, checkInCode, time.Now().Unix())
+	payload := makeCheckInPayload(t, eventID, checkInCode, testSecret)
 	req2 := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
 		Records: []models.AttendanceSyncRecord{{LocalID: "local-conflict", EventID: eventID, Payload: payload}},
 	}))
