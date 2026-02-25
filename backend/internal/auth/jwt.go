@@ -7,7 +7,7 @@
 // claims (assertions) between two parties. It has three Base64-encoded
 // sections separated by dots:
 //
-//   HEADER.PAYLOAD.SIGNATURE
+//	HEADER.PAYLOAD.SIGNATURE
 //
 // The HEADER says which algorithm was used (HS256 here).
 // The PAYLOAD carries our custom claims (user_id, role) plus standard

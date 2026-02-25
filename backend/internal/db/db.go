@@ -84,28 +84,28 @@ func migrate(db *sql.DB) error {
 //
 // LEARNING NOTE — schema design choices
 //
-//   users          — single table for both students and companies; the
-//                    "role" column distinguishes them. Simpler than two
-//                    separate tables for a project this size.
+//	users          — single table for both students and companies; the
+//	                 "role" column distinguishes them. Simpler than two
+//	                 separate tables for a project this size.
 //
-//   skills         — a global catalogue of skill badges. Companies pick
-//                    from here when creating events.
+//	skills         — a global catalogue of skill badges. Companies pick
+//	                 from here when creating events.
 //
-//   events         — hosted by a company. Stores a check_in_code (a
-//                    random UUID) that is the shared secret embedded in
-//                    the QR code shown at check-in.
+//	events         — hosted by a company. Stores a check_in_code (a
+//	                 random UUID) that is the shared secret embedded in
+//	                 the QR code shown at check-in.
 //
-//   event_skills   — many-to-many join: one event can award many skills.
+//	event_skills   — many-to-many join: one event can award many skills.
 //
-//   registrations  — a student's intent to attend an event. Created
-//                    online; the UNIQUE constraint prevents duplicates.
+//	registrations  — a student's intent to attend an event. Created
+//	                 online; the UNIQUE constraint prevents duplicates.
 //
-//   attendances    — the offline check-in proof. The student stores this
-//                    locally and syncs it later. UNIQUE(event_id,student_id)
-//                    means the upsert in SyncAttendance is safe to retry.
+//	attendances    — the offline check-in proof. The student stores this
+//	                 locally and syncs it later. UNIQUE(event_id,student_id)
+//	                 means the upsert in SyncAttendance is safe to retry.
 //
-//   user_skills    — the awarded badge. Written when attendance is verified.
-//                    UNIQUE(user_id,skill_id,event_id) makes award idempotent.
+//	user_skills    — the awarded badge. Written when attendance is verified.
+//	                 UNIQUE(user_id,skill_id,event_id) makes award idempotent.
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
@@ -135,6 +135,8 @@ CREATE TABLE IF NOT EXISTS events (
     status        TEXT NOT NULL DEFAULT 'upcoming'
                       CHECK(status IN ('upcoming','active','completed')),
     check_in_code TEXT NOT NULL DEFAULT '',
+    capacity         INTEGER,
+    slots_remaining  INTEGER,
     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -150,6 +152,8 @@ CREATE TABLE IF NOT EXISTS registrations (
     event_id      TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     student_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status        TEXT NOT NULL DEFAULT 'confirmed'
+                      CHECK(status IN ('confirmed','conflict_pending','waitlisted')),
     UNIQUE (event_id, student_id)
 );
 
@@ -174,4 +178,3 @@ CREATE TABLE IF NOT EXISTS user_skills (
     UNIQUE (user_id, skill_id, event_id)
 );
 `
-

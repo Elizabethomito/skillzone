@@ -185,3 +185,78 @@ func TestGetMySkills(t *testing.T) {
 		t.Errorf("expected 1 skill, got %d", len(skills))
 	}
 }
+
+// TestSyncAutoRegisters verifies that scanning a QR while unregistered
+// automatically creates a confirmed registration on sync.
+func TestSyncAutoRegisters(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, checkInCode := seedEvent(t, srv, companyID)
+
+	// Confirm no prior registration.
+	var count int
+	srv.DB.QueryRow(`SELECT COUNT(*) FROM registrations WHERE event_id=? AND student_id=?`, eventID, studentID).Scan(&count)
+	if count != 0 {
+		t.Fatal("expected no prior registration")
+	}
+
+	payload := fmt.Sprintf(`{"event_id":%q,"host_sig":%q,"timestamp":%d}`, eventID, checkInCode, time.Now().Unix())
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
+		Records: []models.AttendanceSyncRecord{{LocalID: "local-auto", EventID: eventID, Payload: payload}},
+	}))
+	req = ctxWithUser(req, studentID, "student")
+	rec := httptest.NewRecorder()
+	srv.SyncAttendance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	srv.DB.QueryRow(`SELECT COUNT(*) FROM registrations WHERE event_id=? AND student_id=?`, eventID, studentID).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected auto-registration to be created, got count=%d", count)
+	}
+	var regStatus string
+	srv.DB.QueryRow(`SELECT status FROM registrations WHERE event_id=? AND student_id=?`, eventID, studentID).Scan(&regStatus)
+	if regStatus != "confirmed" {
+		t.Errorf("expected confirmed, got %q", regStatus)
+	}
+}
+
+// TestSyncAutoRegisters_ConflictWhenFull verifies that scanning a QR for a
+// fully-booked event creates a conflict_pending registration.
+func TestSyncAutoRegisters_ConflictWhenFull(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	student1 := seedStudentUser(t, srv)
+	student2 := seedStudentUser(t, srv)
+
+	// Capacity 1, already used by student1.
+	eventID, checkInCode := seedEventWithCapacity(t, srv, companyID, 1)
+
+	// Student1 registers online first, consuming the only slot.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/events/"+eventID+"/register", nil)
+	req1.SetPathValue("id", eventID)
+	req1 = ctxWithUser(req1, student1, "student")
+	srv.RegisterForEvent(httptest.NewRecorder(), req1)
+
+	// Student2 syncs an offline QR scan.
+	payload := fmt.Sprintf(`{"event_id":%q,"host_sig":%q,"timestamp":%d}`, eventID, checkInCode, time.Now().Unix())
+	req2 := httptest.NewRequest(http.MethodPost, "/api/sync/attendance", jsonBody(t, models.SyncAttendanceRequest{
+		Records: []models.AttendanceSyncRecord{{LocalID: "local-conflict", EventID: eventID, Payload: payload}},
+	}))
+	req2 = ctxWithUser(req2, student2, "student")
+	rec2 := httptest.NewRecorder()
+	srv.SyncAttendance(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	var regStatus string
+	srv.DB.QueryRow(`SELECT status FROM registrations WHERE event_id=? AND student_id=?`, eventID, student2).Scan(&regStatus)
+	if regStatus != "conflict_pending" {
+		t.Errorf("expected conflict_pending, got %q", regStatus)
+	}
+}

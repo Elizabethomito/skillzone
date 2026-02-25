@@ -39,6 +39,16 @@ AttendanceVerified AttendanceStatus = "verified"
 AttendanceRejected AttendanceStatus = "rejected"
 )
 
+// RegistrationStatus tracks the slot-allocation outcome for a registration.
+// This matters when students register offline and the event is already full.
+type RegistrationStatus string
+
+const (
+	RegistrationConfirmed       RegistrationStatus = "confirmed"
+	RegistrationConflictPending RegistrationStatus = "conflict_pending"
+	RegistrationWaitlisted      RegistrationStatus = "waitlisted"
+)
+
 // User represents both student and company accounts.
 // The json:"-" tag on PasswordHash tells encoding/json to NEVER include it
 // in a JSON response — even if you forget to filter it manually.
@@ -62,28 +72,33 @@ CreatedAt   time.Time `json:"created_at"`
 
 // Event is a learning opportunity hosted by a company.
 type Event struct {
-ID          string      `json:"id"`
-HostID      string      `json:"host_id"`
-Title       string      `json:"title"`
-Description string      `json:"description"`
-Location    string      `json:"location"`
-StartTime   time.Time   `json:"start_time"`
-EndTime     time.Time   `json:"end_time"`
-Status      EventStatus `json:"status"`
+	ID          string      `json:"id"`
+	HostID      string      `json:"host_id"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Location    string      `json:"location"`
+	StartTime   time.Time   `json:"start_time"`
+	EndTime     time.Time   `json:"end_time"`
+	Status      EventStatus `json:"status"`
 
-// CheckInCode is a short-lived secret embedded in the host's QR code.
-// omitempty means it is omitted from JSON when empty — the list endpoint
-// never populates it; only the host's /checkin-code endpoint does.
-CheckInCode string    `json:"check_in_code,omitempty"`
-CreatedAt   time.Time `json:"created_at"`
-UpdatedAt   time.Time `json:"updated_at"`
+	// CheckInCode is a short-lived secret embedded in the host's QR code.
+	// omitempty means it is omitted from JSON when empty — the list endpoint
+	// never populates it; only the host's /checkin-code endpoint does.
+	CheckInCode string `json:"check_in_code,omitempty"`
 
-// Skills is populated by a JOIN query when reading events.
-// It is omitted from JSON when nil (no skills linked yet).
-Skills []Skill `json:"skills,omitempty"`
-}
+	// Capacity is the maximum number of confirmed registrations allowed.
+	// nil / 0 means unlimited. SlotsRemaining is decremented on each
+	// confirmed registration and is what the frontend displays.
+	Capacity        *int `json:"capacity,omitempty"`
+	SlotsRemaining  *int `json:"slots_remaining,omitempty"`
 
-// EventSkill links a skill to an event (many-to-many join table).
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Skills is populated by a JOIN query when reading events.
+	// It is omitted from JSON when nil (no skills linked yet).
+	Skills []Skill `json:"skills,omitempty"`
+}// EventSkill links a skill to an event (many-to-many join table).
 type EventSkill struct {
 EventID string `json:"event_id"`
 SkillID string `json:"skill_id"`
@@ -92,13 +107,12 @@ SkillID string `json:"skill_id"`
 // Registration records a student's intent to attend an event.
 // Created when a student calls POST /api/events/{id}/register.
 type Registration struct {
-ID           string    `json:"id"`
-EventID      string    `json:"event_id"`
-StudentID    string    `json:"student_id"`
-RegisteredAt time.Time `json:"registered_at"`
-}
-
-// Attendance is the cryptographic check-in proof submitted by a student.
+	ID           string             `json:"id"`
+	EventID      string             `json:"event_id"`
+	StudentID    string             `json:"student_id"`
+	RegisteredAt time.Time          `json:"registered_at"`
+	Status       RegistrationStatus `json:"status"`
+}// Attendance is the cryptographic check-in proof submitted by a student.
 //
 // Local-first flow:
 //  1. Host's device shows a QR code containing a CheckInPayload JSON.
@@ -155,14 +169,29 @@ User  User   `json:"user"`
 }
 
 type CreateEventRequest struct {
-Title       string    `json:"title"`
-Description string    `json:"description"`
-Location    string    `json:"location"`
-StartTime   time.Time `json:"start_time"`
-EndTime     time.Time `json:"end_time"`
-// SkillIDs is a list of existing skill IDs to attach to this event.
-// After completing the event, students earn all of these as badges.
-SkillIDs []string `json:"skill_ids"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Location    string    `json:"location"`
+	StartTime   time.Time `json:"start_time"`
+	EndTime     time.Time `json:"end_time"`
+	// SkillIDs is a list of existing skill IDs to attach to this event.
+	// After completing the event, students earn all of these as badges.
+	SkillIDs []string `json:"skill_ids"`
+	// Capacity, if > 0, caps the number of confirmed registrations.
+	// Leave 0 or omit for unlimited. Used for internships with limited slots.
+	Capacity int `json:"capacity,omitempty"`
+}
+
+// UpdateEventStatusRequest is used by PATCH /api/events/{id}/status
+type UpdateEventStatusRequest struct {
+	Status EventStatus `json:"status"`
+}
+
+// ResolveConflictRequest is used by PATCH /api/events/{id}/registrations/{reg_id}
+// The host either confirms the registration (taking the last slot) or waitlists it.
+type ResolveConflictRequest struct {
+	// Action must be "confirm" or "waitlist"
+	Action string `json:"action"`
 }
 
 type SyncAttendanceRequest struct {

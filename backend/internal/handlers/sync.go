@@ -1,16 +1,15 @@
 package handlers
 
 import (
-"encoding/json"
-"net/http"
-"time"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"time"
 
-"github.com/Elizabethomito/skillzone/backend/internal/middleware"
-"github.com/Elizabethomito/skillzone/backend/internal/models"
-"github.com/google/uuid"
-)
-
-// SyncAttendance handles POST /api/sync/attendance  (student only)
+	"github.com/Elizabethomito/skillzone/backend/internal/middleware"
+	"github.com/Elizabethomito/skillzone/backend/internal/models"
+	"github.com/google/uuid"
+)// SyncAttendance handles POST /api/sync/attendance  (student only)
 //
 // This is the heart of the "local-first" design. Here is the full flow:
 //
@@ -111,35 +110,90 @@ if time.Since(payloadTime) > 24*time.Hour {
 return fail("check-in payload has expired")
 }
 
-// Step 6 — Upsert the attendance record.
-// ON CONFLICT ... DO UPDATE makes this idempotent: if the student syncs
-// the same check-in twice (e.g. bad network on the first attempt), the
-// second call just updates the timestamp and does not create a duplicate.
-// The UNIQUE constraint is on (event_id, student_id) — see the schema.
-attendanceID := uuid.NewString()
-now := time.Now().UTC()
-_, err = s.DB.ExecContext(r.Context(),
-`INSERT INTO attendances (id, event_id, student_id, payload, status, created_at, updated_at)
- VALUES (?, ?, ?, ?, 'verified', ?, ?)
- ON CONFLICT(event_id, student_id) DO UPDATE SET
-   status     = 'verified',
-   updated_at = excluded.updated_at`,
-attendanceID, rec.EventID, studentID, rec.Payload, now, now,
-)
-if err != nil {
-return fail("database error recording attendance")
-}
+	// Step 6 — Upsert the attendance record.
+	// ON CONFLICT ... DO UPDATE makes this idempotent: if the student syncs
+	// the same check-in twice (e.g. bad network on the first attempt), the
+	// second call just updates the timestamp and does not create a duplicate.
+	// The UNIQUE constraint is on (event_id, student_id) — see the schema.
+	attendanceID := uuid.NewString()
+	now := time.Now().UTC()
+	_, err = s.DB.ExecContext(r.Context(),
+		`INSERT INTO attendances (id, event_id, student_id, payload, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'verified', ?, ?)
+		 ON CONFLICT(event_id, student_id) DO UPDATE SET
+		   status     = 'verified',
+		   updated_at = excluded.updated_at`,
+		attendanceID, rec.EventID, studentID, rec.Payload, now, now,
+	)
+	if err != nil {
+		return fail("database error recording attendance")
+	}
 
-// Step 7 — Award badges (also idempotent via INSERT OR IGNORE).
-if err := s.awardSkills(r, studentID, rec.EventID); err != nil {
-return fail("could not award skills: " + err.Error())
-}
+	// Step 6b — Auto-register the student if they haven't already.
+	// This handles the demo scenario where a student scans the QR and
+	// checks in offline without having registered beforehand.
+	// We use the same slot-aware logic as RegisterForEvent:
+	//   • If slots are available → confirmed registration.
+	//   • If no slots remain     → conflict_pending (host resolves).
+	if err := s.upsertRegistration(r, studentID, rec.EventID, now); err != nil {
+		return fail("could not record registration: " + err.Error())
+	}
 
-return models.SyncResult{
+	// Step 7 — Award badges (also idempotent via INSERT OR IGNORE).
+	if err := s.awardSkills(r, studentID, rec.EventID); err != nil {
+		return fail("could not award skills: " + err.Error())
+	}
+
+	return models.SyncResult{
 LocalID: rec.LocalID,
 Status:  models.AttendanceVerified,
 Message: "attendance verified and skills awarded",
 }
+}
+
+// upsertRegistration ensures a registration row exists for the student at the event.
+// Called from processAttendanceRecord so a QR scan auto-registers the student
+// even if they never pressed "Register" while online.
+//
+// Slot logic (mirrors RegisterForEvent):
+//   - If capacity is NULL or slots remain → confirmed.
+//   - If no slots remain → conflict_pending (host dashboard will show this).
+//   - If already registered → no change (INSERT OR IGNORE).
+func (s *Server) upsertRegistration(r *http.Request, studentID, eventID string, now time.Time) error {
+	// Read capacity state.
+	var capacity, slotsRemaining sql.NullInt64
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT capacity, slots_remaining FROM events WHERE id = ?`, eventID,
+	).Scan(&capacity, &slotsRemaining)
+	if err != nil {
+		return err
+	}
+
+	regStatus := "confirmed"
+	if capacity.Valid && capacity.Int64 > 0 && slotsRemaining.Valid && slotsRemaining.Int64 <= 0 {
+		regStatus = "conflict_pending"
+	}
+
+	result, err := s.DB.ExecContext(r.Context(),
+		`INSERT OR IGNORE INTO registrations (id, event_id, student_id, registered_at, status)
+		 VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), eventID, studentID, now, regStatus,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Only decrement slots when a brand-new confirmed registration was inserted.
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected > 0 && regStatus == "confirmed" && capacity.Valid {
+		_, err = s.DB.ExecContext(r.Context(),
+			`UPDATE events SET slots_remaining = slots_remaining - 1, updated_at = ?
+			 WHERE id = ? AND slots_remaining > 0`,
+			now, eventID,
+		)
+		return err
+	}
+	return nil
 }
 
 // awardSkills inserts a UserSkill row for each skill linked to the event.

@@ -6,13 +6,13 @@
 // In HTTP servers, "middleware" is a function that wraps a handler to
 // add behaviour before and/or after it runs. The pattern in Go is:
 //
-//   func MyMiddleware(next http.Handler) http.Handler {
-//       return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//           // do something before
-//           next.ServeHTTP(w, r)  // call the real handler
-//           // do something after
-//       })
-//   }
+//	func MyMiddleware(next http.Handler) http.Handler {
+//	    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//	        // do something before
+//	        next.ServeHTTP(w, r)  // call the real handler
+//	        // do something after
+//	    })
+//	}
 //
 // Middleware can be chained: CORS(Authenticate(handler)) means CORS
 // runs first, then Authenticate, then the handler.

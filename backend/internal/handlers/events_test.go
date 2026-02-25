@@ -177,3 +177,138 @@ func TestRegisterForEvent_Idempotent(t *testing.T) {
 		}
 	}
 }
+
+// seedEventWithCapacity inserts an event with a capacity limit for slot tests.
+func seedEventWithCapacity(t *testing.T, srv *Server, hostID string, capacity int) (eventID, checkInCode string) {
+	t.Helper()
+	eventID = uuid.NewString()
+	checkInCode = uuid.NewString()
+	_, err := srv.DB.Exec(
+		`INSERT INTO events (id, host_id, title, description, location, start_time, end_time, status, check_in_code, capacity, slots_remaining)
+		 VALUES (?, ?, 'Internship', '', '', ?, ?, 'upcoming', ?, ?, ?)`,
+		eventID, hostID,
+		time.Now().Add(24*time.Hour).UTC(),
+		time.Now().Add(48*time.Hour).UTC(),
+		checkInCode, capacity, capacity,
+	)
+	if err != nil {
+		t.Fatalf("seedEventWithCapacity: %v", err)
+	}
+	return
+}
+
+func TestRegisterForEvent_CapacityConflict(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	student1 := seedStudentUser(t, srv)
+	student2 := seedStudentUser(t, srv)
+
+	// Event with only 1 slot.
+	eventID, _ := seedEventWithCapacity(t, srv, companyID, 1)
+
+	register := func(studentID string) models.Registration {
+		req := httptest.NewRequest(http.MethodPost, "/api/events/"+eventID+"/register", nil)
+		req.SetPathValue("id", eventID)
+		req = ctxWithUser(req, studentID, "student")
+		rec := httptest.NewRecorder()
+		srv.RegisterForEvent(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var reg models.Registration
+		json.NewDecoder(rec.Body).Decode(&reg)
+		return reg
+	}
+
+	reg1 := register(student1)
+	reg2 := register(student2)
+
+	if reg1.Status != models.RegistrationConfirmed {
+		t.Errorf("first registration should be confirmed, got %q", reg1.Status)
+	}
+	if reg2.Status != models.RegistrationConflictPending {
+		t.Errorf("second registration should be conflict_pending, got %q", reg2.Status)
+	}
+}
+
+func TestUpdateEventStatus(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/events/"+eventID+"/status",
+		jsonBody(t, models.UpdateEventStatusRequest{Status: models.EventStatusCompleted}))
+	req.SetPathValue("id", eventID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.UpdateEventStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Verify DB was updated.
+	var status string
+	srv.DB.QueryRow(`SELECT status FROM events WHERE id = ?`, eventID).Scan(&status)
+	if status != "completed" {
+		t.Errorf("expected status=completed, got %q", status)
+	}
+}
+
+func TestResolveRegistrationConflict(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEventWithCapacity(t, srv, companyID, 0) // 0 slots → conflict immediately
+
+	// Force a conflict_pending registration directly.
+	regID := uuid.NewString()
+	_, err := srv.DB.Exec(
+		`INSERT INTO registrations (id, event_id, student_id, status) VALUES (?, ?, ?, 'conflict_pending')`,
+		regID, eventID, studentID,
+	)
+	if err != nil {
+		t.Fatalf("insert conflict reg: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/events/"+eventID+"/registrations/"+regID,
+		jsonBody(t, models.ResolveConflictRequest{Action: "confirm"}))
+	req.SetPathValue("id", eventID)
+	req.SetPathValue("reg_id", regID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.ResolveRegistrationConflict(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var newStatus string
+	srv.DB.QueryRow(`SELECT status FROM registrations WHERE id = ?`, regID).Scan(&newStatus)
+	if newStatus != "confirmed" {
+		t.Errorf("expected confirmed, got %q", newStatus)
+	}
+}
+
+func TestGetEventRegistrations(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	srv.DB.Exec(`INSERT OR IGNORE INTO registrations (id, event_id, student_id) VALUES (?, ?, ?)`,
+		uuid.NewString(), eventID, studentID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events/"+eventID+"/registrations", nil)
+	req.SetPathValue("id", eventID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.GetEventRegistrations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var result []map[string]any
+	json.NewDecoder(rec.Body).Decode(&result)
+	if len(result) != 1 {
+		t.Errorf("expected 1 registration, got %d", len(result))
+	}
+}

@@ -64,6 +64,9 @@ func main() {
 	mux.HandleFunc("GET /api/events", srv.ListEvents)
 	mux.HandleFunc("GET /api/events/{id}", srv.GetEvent)
 	mux.HandleFunc("GET /api/skills", srv.ListSkills)
+	// Demo seed — loads all fixture data; safe to call multiple times (idempotent).
+	// Remove or gate behind an env flag before any real deployment.
+	mux.HandleFunc("POST /api/admin/seed", srv.SeedDemo)
 
 	// ── Middleware helpers ────────────────────────────────────────────
 	// middleware.Authenticate returns a function that wraps any handler.
@@ -85,6 +88,12 @@ func main() {
 		auth(onlyCompany(http.HandlerFunc(srv.CreateEvent))))
 	mux.Handle("GET /api/events/{id}/checkin-code",
 		auth(onlyCompany(http.HandlerFunc(srv.GetEventCheckInCode))))
+	mux.Handle("PATCH /api/events/{id}/status",
+		auth(onlyCompany(http.HandlerFunc(srv.UpdateEventStatus))))
+	mux.Handle("GET /api/events/{id}/registrations",
+		auth(onlyCompany(http.HandlerFunc(srv.GetEventRegistrations))))
+	mux.Handle("PATCH /api/events/{id}/registrations/{reg_id}",
+		auth(onlyCompany(http.HandlerFunc(srv.ResolveRegistrationConflict))))
 	mux.Handle("POST /api/skills",
 		auth(onlyCompany(http.HandlerFunc(srv.CreateSkill))))
 

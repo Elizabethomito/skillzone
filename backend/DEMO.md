@@ -5,195 +5,293 @@ Use this guide to run the full end-to-end demo on a local Wi-Fi network
 
 ---
 
-## Prerequisites
+## Cast of characters
 
-- Go 1.22+ installed on the demo laptop
-- All demo devices on the **same Wi-Fi network** (or phone hotspot)
-- A modern browser on each device (Chrome/Firefox/Edge)
-- The frontend `dist/` already built (or Vite dev server running)
+| Person | Role | Email | Password |
+|--------|------|-------|----------|
+| **TechCorp Africa** | Event host (company) | `host@techcorp.test` | `demo1234` |
+| **Amara Osei** | Veteran student | `amara@student.test` | `demo1234` |
+| **Baraka Mwangi** | Newcomer student | `baraka@student.test` | `demo1234` |
+
+**Amara** has been on the platform for months: 6 completed events, 6 skill
+badges (Python, Data Science, Open Source, Cloud, Mobile Dev, Cybersecurity),
+and is already registered for today's workshop.
+
+**Baraka** just signed up. No history, no pre-registration — they arrived at
+the venue and will scan the QR like everyone else.
 
 ---
 
-## Step 1 — Find your laptop's local IP address
+## Step 1 — Find your laptop's local IP
 
 ```bash
 # Linux / macOS
 ip addr show | grep "inet " | grep -v 127.0.0.1
-# or
-ifconfig | grep "inet " | grep -v 127.0.0.1
-
 # Windows
 ipconfig
 ```
 
-Look for an address like `192.168.x.x` or `10.x.x.x`.
-Write it down — you'll need it throughout this runbook.
+Note the address — something like `192.168.x.x`. You'll use it everywhere below.
 
 ---
 
-## Step 2 — Build the backend binary
+## Step 2 — Build and start the server
 
 ```bash
 cd /home/akihara/hackathons/skillzone/backend
 go build -o skillzone ./cmd/server/
+
+ADDR=0.0.0.0:8080 JWT_SECRET=hackathon-demo ./skillzone
 ```
 
-This produces a single binary `skillzone` with SQLite embedded (pure Go,
-no shared libraries needed).
+> **Why `0.0.0.0`?**  The default `:8080` only listens on localhost.
+> `0.0.0.0:8080` listens on all interfaces, so phones and other laptops on
+> the same Wi-Fi can reach it.
 
 ---
 
-## Step 3 — Run the server bound to all interfaces
-
-```bash
-ADDR=0.0.0.0:8080 \
-JWT_SECRET="hackathon-demo-secret" \
-./skillzone
-```
-
-> **Why `0.0.0.0`?**  
-> The default `:8080` only listens on localhost. `0.0.0.0:8080` listens on
-> every network interface, including the Wi-Fi adapter, so other devices can
-> reach it.
-
-You should see:
-```
-2024/xx/xx xx:xx:xx Skillzone API listening on 0.0.0.0:8080
-```
-
----
-
-## Step 4 — Point the frontend at the backend
-
-If running the Vite dev server, set the API base URL:
+## Step 3 — Point the frontend at the backend
 
 ```bash
 cd /home/akihara/hackathons/skillzone/frontend
 VITE_API_URL=http://<YOUR_LAPTOP_IP>:8080 npm run dev -- --host
 ```
 
-The `--host` flag makes Vite listen on `0.0.0.0` so other devices can reach
-the frontend too.
-
-**Other devices** open: `http://<YOUR_LAPTOP_IP>:5173`
+Other devices open: `http://<YOUR_LAPTOP_IP>:5173`
 
 ---
 
-## Step 5 — Seed demo data
+## Step 4 — Seed all demo data (one command)
 
-Run these curl commands from any terminal (substitute your IP):
+```bash
+curl -s -X POST http://localhost:8080/api/admin/seed | jq .
+```
+
+This creates the three accounts, 9 skill badges, 8 events (6 past/completed,
+1 active workshop, 1 upcoming internship), Amara's full attendance history,
+her skill badges, and her pre-registration for today's workshop.
+
+**Safe to call multiple times** — every INSERT uses `OR IGNORE` so re-seeding
+a running server is harmless.
+
+The response includes the event IDs you'll need below:
+
+```json
+{
+  "active_workshop": {
+    "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
+    "check_in_code": "DEMO-CHECKIN-CODE-AI-WORKSHOP-2026",
+    "title": "Building Apps with AI Workshop"
+  },
+  "internship": {
+    "event_id": "seed-event-intern-0000-0000-0000-000000000031",
+    "title": "AI Product Internship",
+    "slots_remaining": 1
+  }
+}
+```
+
+Save the IDs in environment variables for the curl snippets below:
 
 ```bash
 BASE=http://localhost:8080
+WORKSHOP_ID=seed-event-aiwork-0000-0000-0000-000000000030
+INTERN_ID=seed-event-intern-0000-0000-0000-000000000031
+CHECKIN_CODE=DEMO-CHECKIN-CODE-AI-WORKSHOP-2026
 
-# 1. Create a company account (event host)
-curl -s -X POST $BASE/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"host@demo.com","password":"password1","name":"Zone01 Kisumu","role":"company"}' | jq .
-
-# 2. Log in and save the token
 COMPANY_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"host@demo.com","password":"password1"}' | jq -r .token)
+  -d '{"email":"host@techcorp.test","password":"demo1234"}' | jq -r .token)
 
-# 3. Create a skill badge
-SKILL_ID=$(curl -s -X POST $BASE/api/skills \
+AMARA_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"amara@student.test","password":"demo1234"}' | jq -r .token)
+
+BARAKA_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"baraka@student.test","password":"demo1234"}' | jq -r .token)
+```
+
+---
+
+## Demo script
+
+### Scene 1 — Show Amara's history ("this is a real user")
+
+```bash
+# Her 6 skill badges
+curl -s $BASE/api/users/me/skills \
+  -H "Authorization: Bearer $AMARA_TOKEN" | jq '[.[] | .skill.name]'
+
+# Her registered events (workshop is in there as confirmed)
+curl -s $BASE/api/users/me/registrations \
+  -H "Authorization: Bearer $AMARA_TOKEN" | jq '[.[] | {title: .event_title, status: .event_status}]'
+```
+
+### Scene 2 — Workshop is live: host activates it
+
+The workshop is seeded as `active`, but you can demonstrate the control:
+
+```bash
+curl -s -X PATCH $BASE/api/events/$WORKSHOP_ID/status \
   -H "Authorization: Bearer $COMPANY_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Web Development","description":"Built a local-first PWA"}' | jq -r .id)
+  -d '{"status":"active"}' | jq .
+```
 
-echo "Skill ID: $SKILL_ID"
+### Scene 3 — Host generates the check-in QR
 
-# 4. Create an event (adjust times as needed)
-EVENT_ID=$(curl -s -X POST $BASE/api/events \
-  -H "Authorization: Bearer $COMPANY_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"title\": \"Hackathon Check-In\",
-    \"description\": \"Zone01 LOCAL FIRST hackathon\",
-    \"location\": \"Zone01 Kisumu\",
-    \"start_time\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-    \"end_time\":   \"$(date -u -d '+8 hours' +%Y-%m-%dT%H:%M:%SZ)\",
-    \"skill_ids\": [\"$SKILL_ID\"]
-  }" | jq -r .id)
-
-echo "Event ID: $EVENT_ID"
-
-# 5. Get the check-in code (this goes into the QR code)
-curl -s $BASE/api/events/$EVENT_ID/checkin-code \
+```bash
+curl -s $BASE/api/events/$WORKSHOP_ID/checkin-code \
   -H "Authorization: Bearer $COMPANY_TOKEN" | jq .
 ```
 
----
+The frontend renders this as a QR code containing:
 
-## Step 6 — Student registration
-
-On a **second device** (phone or another laptop), open:
-`http://<YOUR_LAPTOP_IP>:5173`
-
-1. Register as a student.
-2. Browse events and tap **Register** on the hackathon event.
-
----
-
-## Step 7 — Demo the offline check-in flow
-
-This is the key local-first demo:
-
-### 7a. Host gets the QR code
-
-On the host device (still online):
-- Log in as `host@demo.com`
-- Open the event → tap **Show Check-In QR**
-- The frontend calls `/api/events/{id}/checkin-code` and renders a QR
-
-### 7b. Turn the student device offline
-
-- On the student's phone: **turn off Wi-Fi AND mobile data** (Airplane Mode)
-- The PWA should still load from the service worker cache
-
-### 7c. Student scans the QR
-
-- Student opens the PWA → **Scan Check-In**
-- Scans the host's QR code
-- The PWA stores the payload in IndexedDB with status `PENDING`
-- UI shows: *"Checked in ✓ — badge will be awarded when you reconnect"*
-
-### 7d. Reconnect and sync
-
-- Turn Wi-Fi back on
-- The service worker background sync fires automatically
-  (or the student taps **Sync Now**)
-- The PWA sends the pending record to `POST /api/sync/attendance`
-- Server verifies the signature → awards the **Web Development** badge
-- PWA updates IndexedDB record to `VERIFIED` and shows the badge 🎉
-
----
-
-## Step 8 — Show the judge what happened
-
-```bash
-# List the student's earned badges
-STUDENT_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"student@demo.com","password":"password1"}' | jq -r .token)
-
-curl -s $BASE/api/users/me/skills \
-  -H "Authorization: Bearer $STUDENT_TOKEN" | jq .
+```json
+{
+  "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
+  "host_sig": "DEMO-CHECKIN-CODE-AI-WORKSHOP-2026",
+  "timestamp": <unix_now>
+}
 ```
 
+Display this QR on the projector screen.
+
+### Scene 4 — Network drops
+
+> "The venue is packed. The cell tower is overwhelmed — network is effectively
+> down. But our app keeps working."
+
+Chrome DevTools → **Network** tab → set throttle to **Offline**.
+
+### Scene 5 — Amara and Baraka scan the QR offline
+
+Both scan with their PWAs. Each app:
+1. Validates the payload locally (no server call needed).
+2. Stores `ATTENDANCE_PENDING` in IndexedDB.
+3. Shows: *"Checked in ✓ — badges will appear when you reconnect."*
+
+**Baraka was NOT pre-registered.** The QR scan still works; the server will
+auto-register her when the sync fires.
+
+### Scene 6 — Both apply for the internship while offline
+
+While still offline, both open the internship event and tap **Apply**. The
+PWA queues the registration locally with status `PENDING`. Only 1 slot remains.
+
+### Scene 7 — Network returns, sync fires
+
+Re-enable the network. The service worker's Background Sync fires automatically.
+
+To demo manually with curl:
+
+```bash
+NOW=$(date +%s)
+
+# ── Amara syncs her workshop check-in ──────────────────────────────────────
+curl -s -X POST $BASE/api/sync/attendance \
+  -H "Authorization: Bearer $AMARA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"records\":[{
+    \"local_id\":\"amara-local-001\",
+    \"event_id\":\"$WORKSHOP_ID\",
+    \"payload\":\"{\\\"event_id\\\":\\\"$WORKSHOP_ID\\\",\\\"host_sig\\\":\\\"$CHECKIN_CODE\\\",\\\"timestamp\\\":$NOW}\"
+  }]}" | jq .
+
+# Amara applies for the internship (gets the last slot)
+curl -s -X POST $BASE/api/events/$INTERN_ID/register \
+  -H "Authorization: Bearer $AMARA_TOKEN" | jq '{id, status}'
+
+# ── Baraka syncs her workshop check-in (also auto-registers her) ────────────
+curl -s -X POST $BASE/api/sync/attendance \
+  -H "Authorization: Bearer $BARAKA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"records\":[{
+    \"local_id\":\"baraka-local-001\",
+    \"event_id\":\"$WORKSHOP_ID\",
+    \"payload\":\"{\\\"event_id\\\":\\\"$WORKSHOP_ID\\\",\\\"host_sig\\\":\\\"$CHECKIN_CODE\\\",\\\"timestamp\\\":$NOW}\"
+  }]}" | jq .
+
+# Baraka applies for the internship (slot gone → conflict_pending)
+curl -s -X POST $BASE/api/events/$INTERN_ID/register \
+  -H "Authorization: Bearer $BARAKA_TOKEN" | jq '{id, status}'
+```
+
+**Expected registration statuses:**
+- Amara → `"confirmed"` (first applicant, slot was available)
+- Baraka → `"conflict_pending"` (slot exhausted)
+
+### Scene 8 — Badges awarded automatically
+
+```bash
+# Amara now has 8 badges (6 old + AI Application Development + Prompt Engineering)
+curl -s $BASE/api/users/me/skills \
+  -H "Authorization: Bearer $AMARA_TOKEN" | jq '[.[] | .skill.name]'
+
+# Baraka has her first badge
+curl -s $BASE/api/users/me/skills \
+  -H "Authorization: Bearer $BARAKA_TOKEN" | jq '[.[] | .skill.name]'
+```
+
+### Scene 9 — Host sees the conflict on the dashboard
+
+```bash
+curl -s $BASE/api/events/$INTERN_ID/registrations \
+  -H "Authorization: Bearer $COMPANY_TOKEN" \
+  | jq '[.[] | {name: .student_name, status}]'
+```
+
+Output:
+```json
+[
+  { "name": "Amara Osei",    "status": "confirmed" },
+  { "name": "Baraka Mwangi", "status": "conflict_pending" }
+]
+```
+
+### Scene 10 — Host resolves the conflict
+
+```bash
+# Get Baraka's registration ID
+BARAKA_REG_ID=$(curl -s $BASE/api/events/$INTERN_ID/registrations \
+  -H "Authorization: Bearer $COMPANY_TOKEN" | \
+  jq -r '.[] | select(.student_name=="Baraka Mwangi") | .id')
+
+# Confirm Baraka (host expands to 2 slots)
+curl -s -X PATCH $BASE/api/events/$INTERN_ID/registrations/$BARAKA_REG_ID \
+  -H "Authorization: Bearer $COMPANY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"confirm"}' | jq .
+
+# Or waitlist instead:
+# -d '{"action":"waitlist"}'
+```
+
+### Scene 11 — End the workshop early (EOD)
+
+```bash
+curl -s -X PATCH $BASE/api/events/$WORKSHOP_ID/status \
+  -H "Authorization: Bearer $COMPANY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"completed"}' | jq .
+```
+
+> Attendance syncs within 24 hours of the QR timestamp are still accepted
+> after the event is completed — students who left before reconnecting can
+> still sync from home.
+
 ---
 
-## Simulating a slow / unreliable network (Chrome DevTools)
+## Showing offline mode in Chrome DevTools
 
-1. Open Chrome DevTools on the student's device → **Network** tab
-2. Set throttling to **Slow 3G** or **Offline**
-3. Show that the PWA still loads and check-in still works
-4. Switch back to online → show the sync completing
+1. **Application** → **Service Workers** → tick "Offline"
+2. Show the PWA loading from cache
+3. **Application** → **Storage** → **IndexedDB** → `skillzone`
+   — pending attendance records visible here
+4. Untick "Offline" → watch **Background Services → Background Sync** fire
 
-To show the service worker:
-- DevTools → **Application** → **Service Workers**
-- You can see the background sync queue under **Background Services → Background Sync**
+Slow network simulation: **Network** tab → **Slow 3G** preset.
 
 ---
 
@@ -201,30 +299,63 @@ To show the service worker:
 
 | Scenario | How to trigger | Expected result |
 |---|---|---|
-| Wrong QR code | Edit the payload JSON before syncing | `rejected: invalid check-in signature` |
-| Stale QR (>24 h) | Manually set `timestamp` to yesterday | `rejected: check-in payload has expired` |
-| Double-sync (retry) | Call sync twice with same `local_id` | Second call returns `verified` silently (idempotent) |
-| Server down during sync | Stop the server, scan QR, restart server, sync | Sync succeeds on reconnect |
-| No internet at venue | Turn off Wi-Fi entirely, scan QR | Check-in stored locally; badge awarded on reconnect |
+| Wrong QR code | Change `host_sig` in payload | `rejected: invalid check-in signature` |
+| Stale QR (>24 h) | Set `timestamp` to yesterday | `rejected: check-in payload has expired` |
+| Double-sync retry | Call sync twice, same `local_id` | Second call returns `verified` — idempotent |
+| Two offline internship applicants | Run Scenes 6 + 7 | First = confirmed, second = conflict_pending |
+| Host waitlists applicant | Use `"action":"waitlist"` | Status becomes `waitlisted` |
+| Server down during sync | Stop server, scan QR, restart, re-sync | Sync succeeds on reconnect |
+
+---
+
+## New API endpoints added for this demo
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/admin/seed` | — | Load all demo fixture data (idempotent) |
+| `PATCH` | `/api/events/{id}/status` | company (host only) | Transition event: `upcoming` → `active` → `completed` |
+| `GET` | `/api/events/{id}/registrations` | company (host only) | Attendee list with name, email, registration status |
+| `PATCH` | `/api/events/{id}/registrations/{reg_id}` | company (host only) | Resolve conflict: `{"action":"confirm"}` or `{"action":"waitlist"}` |
+
+### How the internship slot model works
+
+Events have optional `capacity` and `slots_remaining` fields (both `null` = unlimited).
+
+```
+capacity: 2, slots_remaining: 1
+```
+
+When a registration arrives and `slots_remaining == 0`:
+1. The registration is recorded as `status: "conflict_pending"`.
+2. `slots_remaining` is **not** decremented (the host decides whether to expand).
+3. The host sees it in `GET /api/events/{id}/registrations`.
+4. The host calls `PATCH` to confirm or waitlist.
+
+The attendance sync (`POST /api/sync/attendance`) also runs this same slot
+logic — scanning a QR code auto-registers the student, applying the same
+capacity checks.
 
 ---
 
 ## Troubleshooting
 
-**Other devices can't reach the server**
-- Confirm you used `ADDR=0.0.0.0:8080` not the default `:8080`
-- Check your laptop's firewall: `sudo ufw allow 8080`
+**Other devices can't connect**
+```bash
+sudo ufw allow 8080
+```
 
-**CORS errors in the browser**
-- The backend sends `Access-Control-Allow-Origin: *` for all requests
-- If you see CORS errors, ensure the frontend is using the correct IP (not `localhost`)
-
-**`date -d` not available (macOS)**
-- Use `date -u -v+8H +%Y-%m-%dT%H:%M:%SZ` instead of `date -u -d '+8 hours'`
-
-**Port 8080 already in use**
+**Port in use**
 ```bash
 lsof -i :8080
-# Change the port:
 ADDR=0.0.0.0:9090 ./skillzone
+```
+
+**macOS `date -d` unavailable**
+```bash
+date -u +%s   # current unix timestamp
+```
+
+**Re-seed without restarting**
+```bash
+curl -s -X POST http://localhost:8080/api/admin/seed | jq .seeded
 ```
