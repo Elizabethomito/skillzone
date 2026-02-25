@@ -1,0 +1,17 @@
+{
+  "name": "SkillZone",
+  "short_name": "SkillZone",
+  "description": "Skill verification and opportunity platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1a6dea",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}
