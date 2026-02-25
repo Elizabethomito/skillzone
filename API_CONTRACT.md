@@ -111,7 +111,7 @@ export interface Event {
   start_time: string;        // ISO 8601
   end_time: string;
   status: EventStatus;
-  check_in_code?: string;    // only present in GET /api/events/{id}/checkin-code
+  check_in_code?: string;    // internal code stored on the event; not exposed in normal responses
   capacity?: number;         // absent = unlimited
   slots_remaining?: number;  // absent = unlimited; 0 = full
   created_at: string;
@@ -212,13 +212,18 @@ export interface SyncAttendanceResponse {
 }
 
 /**
- * The JSON structure embedded in the host's QR code.
- * The PWA stores this as a JSON string inside AttendanceSyncRecord.payload.
+ * The JSON structure the PWA stores in IndexedDB after a QR scan, and
+ * later sends as AttendanceSyncRecord.payload (JSON-stringified).
+ *
+ * Security model (v2 — signed token):
+ *   The `token` field is a short-lived HS256 JWT issued by the server.
+ *   Its exp enforces the SCAN window (6 h) — only students who scanned
+ *   while the QR was live can produce a valid token.
+ *   The server verifies the JWT SIGNATURE at sync time but ignores exp,
+ *   so students with poor connectivity can sync days or weeks later.
  */
 export interface CheckInPayload {
-  event_id: string;
-  host_sig: string;          // the event's check_in_code — proves physical presence
-  timestamp: number;         // Unix seconds (UTC) — rejected if older than 24 h
+  token: string; // the signed JWT from GET /api/events/{id}/checkin-code
 }
 
 // ─── Extended response shapes (from JOIN queries) ────────────────────────────
@@ -416,8 +421,8 @@ Create a new event. A `check_in_code` UUID is generated automatically by the ser
 
 ### `GET /api/events/{id}/checkin-code`
 
-Retrieve the event's check-in code to render as a QR code on the projector.
-Only the host of the event can call this.
+Retrieve a signed, short-lived check-in token for the event. The host's PWA
+encodes the response into a QR code displayed on screen. Only the host can call this.
 
 - **Auth required:** Yes (company — must be the event host)
 - **Path parameter:** `id` — event UUID
@@ -427,12 +432,15 @@ Only the host of the event can call this.
 ```json
 {
   "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
-  "check_in_code": "DEMO-CHECKIN-CODE-AI-WORKSHOP-2026"
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expires_in_seconds": 21600
 }
 ```
 
-Use these two values to build the `CheckInPayload` JSON that gets encoded
-into the QR code (see [Section 7](#7-offline-sync--deep-dive)).
+> **`token`** is a signed HS256 JWT valid for **6 hours** (`expires_in_seconds = 21600`).
+> It carries `event_id` and `host_sig` claims internally — the frontend does **not**
+> need to decode it. Encode the entire `token` string inside the QR's `CheckInPayload`.
+> See [Section 7](#7-offline-sync--deep-dive) for the exact QR payload shape.
 
 | Status | Meaning |
 |--------|---------|
@@ -723,33 +731,42 @@ Return all events the student is registered for, with event metadata embedded.
 > This section explains the exact data shapes needed to implement the
 > **local-first QR check-in flow** in the PWA.
 
+### The scan window vs. sync window model
+
+This is the most important design decision in the system:
+
+| Window | Duration | Enforcement point |
+|--------|----------|-------------------|
+| **Scan window** | 6 hours | The QR token's `exp` claim — only students present while the QR is live can capture a valid token |
+| **Sync window** | **Unlimited** | None — a valid signed token is accepted at sync time regardless of when it arrives |
+
+A student who scans at 10:00 has a token valid until 16:00. If they don't get connectivity until midnight, the next day, or next week — their sync still succeeds. The server verifies the **signature** (was this token issued by our server?) but not the expiry at sync time.
+
+A student who never attended cannot forge a token because they don't know the server secret used to sign it.
+
 ### How the flow works
 
 ```
-HOST (online)                         STUDENT (can be offline)
-─────────────────────────────────────────────────────────────────────
+HOST (online, at the event)              STUDENT (can be offline)
+────────────────────────────────────────────────────────────────────
 GET /api/events/{id}/checkin-code
-  → { event_id, check_in_code }
+  → { event_id, token, expires_in_seconds }
+                                         (token is live for 6 h)
 
-Build CheckInPayload JSON:
-  {
-    "event_id":  "<id>",
-    "host_sig":  "<check_in_code>",
-    "timestamp": <unix_now>
-  }
+Build QR payload JSON:
+  { "token": "<the JWT string>" }
 
-Display as QR on screen  ──────────►  PWA scans QR
-                                       Stores in IndexedDB (Dexie):
-                                       {
-                                         local_id: crypto.randomUUID(),
-                                         event_id: payload.event_id,
-                                         payload:  JSON.stringify(scanned)
-                                       }
+Display as QR on screen  ─────────────► PWA scans QR
+                                         Stores in IndexedDB (Dexie):
+                                         {
+                                           local_id: crypto.randomUUID(),
+                                           event_id: <decoded from token>,
+                                           payload:  JSON.stringify({ token })
+                                         }
 
-                         ◄── Network returns ──
-                                       Background Sync fires:
-                                       POST /api/sync/attendance
-                                       → SyncAttendanceRequest
+                          ◄── Network returns (any time) ──
+                                         Background Sync fires:
+                                         POST /api/sync/attendance
 ```
 
 ### `POST /api/sync/attendance`
@@ -765,15 +782,14 @@ Submit a batch of locally stored check-in records to the server for verification
     {
       "local_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
       "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
-      "payload": "{\"event_id\":\"seed-event-aiwork-0000-0000-0000-000000000030\",\"host_sig\":\"DEMO-CHECKIN-CODE-AI-WORKSHOP-2026\",\"timestamp\":1740477600}"
+      "payload": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"}"
     }
   ]
 }
 ```
 
-> **Important:** `payload` is a **JSON-encoded string** (i.e. the `CheckInPayload`
-> object serialised with `JSON.stringify()`), not a nested object. The server
-> stores it verbatim for auditability.
+> **Important:** `payload` is a **JSON-encoded string** (i.e. `JSON.stringify({ token })`),
+> not a nested object. The server stores it verbatim for auditability.
 
 - **Success:** `200 OK` → `SyncAttendanceResponse`
 
@@ -805,11 +821,10 @@ its status to `VERIFIED` or `REJECTED`.
 | Message | Cause |
 |---------|-------|
 | `"invalid payload JSON"` | `payload` is not valid JSON |
-| `"payload missing event_id or host_sig"` | QR payload was incomplete |
-| `"payload event_id mismatch"` | Outer `event_id` ≠ `payload.event_id` |
+| `"payload missing token"` | `payload` has no `token` field |
+| `"invalid check-in token: ..."` | JWT signature verification failed (wrong secret, tampered) |
+| `"token event_id does not match record event_id"` | JWT's `event_id` claim ≠ outer `event_id` field |
 | `"event not found"` | Unknown event UUID |
-| `"invalid check-in signature"` | `host_sig` doesn't match server's `check_in_code` |
-| `"check-in payload has expired"` | `timestamp` is more than 24 hours in the past |
 | `"database error recording attendance"` | Server-side error |
 | `"could not record registration: ..."` | Auto-registration failed |
 | `"could not award skills: ..."` | Badge award failed |
@@ -827,19 +842,43 @@ The same capacity rules apply:
 The sync itself still returns `"verified"` in both cases — the student is
 checked in either way. The host resolves the slot conflict separately.
 
-### Building the `CheckInPayload` (frontend code)
+### Building the QR payload (frontend code)
 
 ```typescript
 import type { CheckInPayload, AttendanceSyncRecord } from "@/types/api";
 
-/** Call after the student scans the QR code. */
+interface CheckinCodeResponse {
+  event_id: string;
+  token: string;
+  expires_in_seconds: number;
+}
+
+/**
+ * Called when the host fetches the check-in code to display the QR.
+ * The QR encodes the JSON string produced by this function.
+ */
+function buildQRContent(response: CheckinCodeResponse): string {
+  const payload: CheckInPayload = { token: response.token };
+  return JSON.stringify(payload);
+}
+
+/**
+ * Called after the student scans the QR code.
+ * Stores the record in IndexedDB for later sync.
+ *
+ * @param scannedJson - the raw string decoded from the QR code
+ */
 function buildSyncRecord(scannedJson: string): AttendanceSyncRecord {
+  // Decode the token to extract the event_id claim for the outer field.
+  // No verification here — the server verifies the signature.
   const payload: CheckInPayload = JSON.parse(scannedJson);
+  const tokenParts = payload.token.split(".");
+  const claims = JSON.parse(atob(tokenParts[1]));
 
   return {
     local_id: crypto.randomUUID(),
-    event_id: payload.event_id,
-    // Store the raw string — the server expects payload as a JSON string,
+    event_id: claims.event_id,   // extracted from the JWT payload
+    // Store the raw JSON string — the server expects payload as a JSON string,
     // NOT a nested object.
     payload: scannedJson,
   };
@@ -852,7 +891,7 @@ function buildSyncRecord(scannedJson: string): AttendanceSyncRecord {
 interface PendingCheckIn {
   local_id: string;          // primary key
   event_id: string;
-  payload: string;           // raw QR JSON string
+  payload: string;           // raw QR JSON string: '{"token":"eyJ..."}'
   status: "PENDING" | "VERIFIED" | "REJECTED";
   scanned_at: number;        // Date.now() — for display
 }

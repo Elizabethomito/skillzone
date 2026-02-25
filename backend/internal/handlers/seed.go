@@ -48,6 +48,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Elizabethomito/skillzone/backend/internal/auth"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -260,8 +261,15 @@ func (s *Server) SeedDemo(w http.ResponseWriter, r *http.Request) {
 			 VALUES (?, ?, ?, ?, 'confirmed')`,
 			seedID("amara-reg", i), pe.eventID, SeedAmaraID, pe.when.Add(-24*time.Hour),
 		)
-		// Attendance
-		payloadJSON := `{"event_id":"` + pe.eventID + `","host_sig":"` + pe.ciCode + `","timestamp":` + itoa(pe.when.Unix()) + `}`
+		// Attendance — build a proper signed check-in token for auditability.
+		// The token's exp is set to 6 h after the historical event time so
+		// the payload accurately reflects what the QR would have looked like.
+		ciToken, _ := auth.GenerateCheckInTokenWithExpiry(
+			pe.eventID, pe.ciCode, s.Secret,
+			pe.when,
+			pe.when.Add(auth.CheckInTokenDuration),
+		)
+		payloadJSON := `{"token":"` + ciToken + `"}`
 		s.DB.ExecContext(r.Context(),
 			`INSERT OR IGNORE INTO attendances (id, event_id, student_id, payload, status, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, 'verified', ?, ?)`,

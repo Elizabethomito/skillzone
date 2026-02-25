@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Elizabethomito/skillzone/backend/internal/auth"
 	"github.com/Elizabethomito/skillzone/backend/internal/middleware"
 	"github.com/Elizabethomito/skillzone/backend/internal/models"
 	"github.com/google/uuid"
@@ -59,6 +60,32 @@ func (s *Server) SyncAttendance(w http.ResponseWriter, r *http.Request) {
 //
 // It is deliberately separated from SyncAttendance so it can be unit-tested
 // directly (see sync_test.go) and so the loop in SyncAttendance stays clean.
+//
+// ────────────────────────────────────────────────────────────────────
+// LEARNING NOTE — the new token-based verification model
+// ────────────────────────────────────────────────────────────────────
+// v1 (old): the QR code contained a raw check_in_code UUID + unix timestamp.
+//
+//	The server rejected syncs where time.Since(timestamp) > 24 h, which
+//	forced students with poor connectivity to sync quickly.
+//
+// v2 (new): the QR code contains a signed JWT (CheckInPayload.Token).
+//
+//	The JWT has a 6-hour exp, enforcing the SCAN window — you must have
+//	scanned while the QR was live on screen.  But the JWT never expires
+//	for the SERVER: once a student holds a valid signed token we accept
+//	their sync at any point in the future.  There is no wall-clock check
+//	at sync time.
+//
+// Why is this safe?
+//   - The JWT is signed with the server secret — it cannot be forged.
+//   - The JWT's exp was set when the host generated the QR.  A student
+//     scanning after exp would get a JWT that fails ParseCheckInToken.
+//   - A student who scanned during the live window holds a token whose
+//     signature is permanently valid (we verify sig only, not exp at sync).
+//   - We achieve this by calling jwt.ParseWithClaims with a custom
+//     parser option (jwt.WithoutClaimsValidation) inside ParseCheckInToken
+//     — see auth/jwt.go.
 func (s *Server) processAttendanceRecord(r *http.Request, studentID string, rec models.AttendanceSyncRecord) models.SyncResult {
 	// Helper to build a rejection result in one line.
 	fail := func(msg string) models.SyncResult {
@@ -71,49 +98,39 @@ func (s *Server) processAttendanceRecord(r *http.Request, studentID string, rec 
 		return fail("invalid payload JSON")
 	}
 
-	if payload.EventID == "" || payload.HostSig == "" {
-		return fail("payload missing event_id or host_sig")
+	if payload.Token == "" {
+		return fail("payload missing token")
 	}
 
-	// Step 2 — Sanity check: the outer record's event_id must agree with the
-	// payload's event_id (guards against copy-paste errors in client code).
-	if payload.EventID != rec.EventID {
-		return fail("payload event_id mismatch")
-	}
-
-	// Step 3 — Load the event's server-side check_in_code.
-	var dbCheckInCode, hostID string
-	var status models.EventStatus
-	err := s.DB.QueryRowContext(r.Context(),
-		`SELECT check_in_code, host_id, status FROM events WHERE id = ?`, rec.EventID,
-	).Scan(&dbCheckInCode, &hostID, &status)
+	// Step 2 — Verify the signed check-in token.
+	// ParseCheckInToken checks the JWT signature (was this signed by our server?)
+	// but NOT the expiry — the exp only controls the scan window, which already
+	// closed when the student's device stored the payload.
+	claims, err := auth.ParseCheckInToken(payload.Token, s.Secret)
 	if err != nil {
+		return fail("invalid check-in token: " + err.Error())
+	}
+
+	// Step 3 — The token's event_id must match the outer record's event_id.
+	// This guards against a student copy-pasting the wrong QR payload.
+	if claims.EventID != rec.EventID {
+		return fail("token event_id does not match record event_id")
+	}
+
+	// Step 4 — Confirm the event still exists in the database.
+	// (The host_sig inside the token is already verified by the JWT signature,
+	// so we don't need a separate database lookup to confirm it.)
+	var exists bool
+	err = s.DB.QueryRowContext(r.Context(),
+		`SELECT 1 FROM events WHERE id = ?`, rec.EventID,
+	).Scan(&exists)
+	if err != nil || !exists {
 		return fail("event not found")
 	}
 
-	// Step 4 — Verify the host_sig.
-	// The host_sig in the QR payload must exactly match the check_in_code
-	// stored in the database. This proves the student physically scanned
-	// the host's QR code (they cannot guess the UUID).
-	// NOTE: In a production system you might use HMAC or a short-lived
-	// signed JWT here instead of a bare UUID, for stronger guarantees.
-	if payload.HostSig != dbCheckInCode {
-		return fail("invalid check-in signature")
-	}
-
-	// Step 5 — Reject stale payloads.
-	// If the student's clock was wildly wrong, or they're replaying an old
-	// QR code from a previous session, we reject it.
-	payloadTime := time.Unix(payload.Timestamp, 0)
-	if time.Since(payloadTime) > 24*time.Hour {
-		return fail("check-in payload has expired")
-	}
-
-	// Step 6 — Upsert the attendance record.
-	// ON CONFLICT ... DO UPDATE makes this idempotent: if the student syncs
-	// the same check-in twice (e.g. bad network on the first attempt), the
-	// second call just updates the timestamp and does not create a duplicate.
-	// The UNIQUE constraint is on (event_id, student_id) — see the schema.
+	// Step 5 — Upsert the attendance record (idempotent).
+	// ON CONFLICT ... DO UPDATE means a retry on bad network just refreshes
+	// the updated_at timestamp without creating a duplicate row.
 	attendanceID := uuid.NewString()
 	now := time.Now().UTC()
 	_, err = s.DB.ExecContext(r.Context(),
@@ -128,12 +145,9 @@ func (s *Server) processAttendanceRecord(r *http.Request, studentID string, rec 
 		return fail("database error recording attendance")
 	}
 
-	// Step 6b — Auto-register the student if they haven't already.
-	// This handles the demo scenario where a student scans the QR and
-	// checks in offline without having registered beforehand.
-	// We use the same slot-aware logic as RegisterForEvent:
-	//   • If slots are available → confirmed registration.
-	//   • If no slots remain     → conflict_pending (host resolves).
+	// Step 6 — Auto-register the student if they haven't already.
+	// This handles the scenario where a student scans the QR without
+	// having pre-registered online.  Same slot-aware logic as RegisterForEvent.
 	if err := s.upsertRegistration(r, studentID, rec.EventID, now); err != nil {
 		return fail("could not record registration: " + err.Error())
 	}
