@@ -30,6 +30,7 @@ import {
   type User,
 } from "../lib/api";
 import { initSyncListener, runSync } from "../lib/sync";
+import { usePreemptiveCache } from "../hooks/usePreemptiveCache";
 
 // ─── Context shape ────────────────────────────────────────────────────────────
 
@@ -87,6 +88,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const cleanup = initSyncListener(() => user?.id ?? null);
     return cleanup;
   }, [user]);
+
+  // Phase 1 — Pre-warm Dexie cache on mount and on reconnect.
+  usePreemptiveCache(user);
 
   const signUp = useCallback(
     async (

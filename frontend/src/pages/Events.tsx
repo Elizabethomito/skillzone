@@ -15,6 +15,7 @@ import {
 import toast from "react-hot-toast";
 import QRCode from "qrcode";
 import { Html5QrcodeScanner } from "html5-qrcode";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useAuth } from "../context/AuthContext";
 import { useOnlineStatus } from "../hooks/useOnlineStatus";
@@ -22,10 +23,11 @@ import {
   apiListEvents, apiCreateEvent, apiUpdateEvent, apiUpdateEventStatus,
   apiGetCheckinCode, apiRegisterForEvent, apiUnregisterFromEvent,
   apiGetEventRegistrations, apiListSkills, apiResolveConflict, apiKickRegistration,
+  apiGetMyRegistrations,
   type ApiEvent, type Skill, type RegistrationWithStudent,
 } from "../lib/api";
 import {
-  db, cacheEvents, enqueueCheckIn, enqueueRegister, enqueueUnregister,
+  db, cacheEvents, cacheSkills, enqueueCheckIn, enqueueRegister, enqueueUnregister,
   type CachedEvent,
 } from "../db/database";
 import { runSync } from "../lib/sync";
@@ -433,16 +435,20 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
   const handleRegister = async () => {
     setBusy(true);
     try {
-      if (online) {
-        await apiRegisterForEvent(event.id);
-        toast.success("Registered!");
-      } else {
-        await enqueueRegister(userId, event.id);
-        toast("Registration queued — will sync when online", { icon: "📶" });
-      }
+      // Always try the network first — even if we think we're offline,
+      // the request might succeed (flaky connection).
+      await apiRegisterForEvent(event.id);
+      toast.success("Registered!");
       onRefresh();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed");
+    } catch {
+      // Network or server error — queue for later sync silently.
+      try {
+        await enqueueRegister(userId, event.id);
+        toast("Saved offline — will register when reconnected", { icon: "📶" });
+        onRefresh();
+      } catch (qErr) {
+        toast.error("Could not queue registration — please try again");
+      }
     } finally {
       setBusy(false);
     }
@@ -452,16 +458,19 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
     if (!confirm("Unregister from this event?")) return;
     setBusy(true);
     try {
-      if (online) {
-        await apiUnregisterFromEvent(event.id);
-        toast.success("Unregistered");
-      } else {
-        await enqueueUnregister(userId, event.id);
-        toast("Unregister queued — will sync when online", { icon: "📶" });
-      }
+      // Always try the network first.
+      await apiUnregisterFromEvent(event.id);
+      toast.success("Unregistered");
       onRefresh();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed");
+    } catch {
+      // Queue for later sync.
+      try {
+        await enqueueUnregister(userId, event.id);
+        toast("Saved offline — will unregister when reconnected", { icon: "📶" });
+        onRefresh();
+      } catch (qErr) {
+        toast.error("Could not queue unregistration — please try again");
+      }
     } finally {
       setBusy(false);
     }
@@ -596,11 +605,8 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
 export default function Events() {
   const { user } = useAuth();
   const online = useOnlineStatus();
+  const queryClient = useQueryClient();
 
-  const [events, setEvents]             = useState<ApiEvent[]>([]);
-  const [myRegs, setMyRegs]             = useState<Record<string, string>>({});
-  const [skills, setSkills]             = useState<Skill[]>([]);
-  const [loading, setLoading]           = useState(true);
   const [showCreate, setShowCreate]     = useState(false);
   const [showScanner, setShowScanner]   = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>("all");
@@ -609,42 +615,72 @@ export default function Events() {
   const isCompany = user?.role === "company";
   const isStudent = user?.role === "student";
 
-  const loadEvents = useCallback(async () => {
-    try {
-      if (online) {
-        const [evts, sk] = await Promise.all([apiListEvents(), apiListSkills()]);
-        setEvents(evts);
-        setSkills(sk);
-        // Cache for offline
-        cacheEvents(evts as any).catch(() => {});
-        if (isStudent) {
-          // Build registration map
-          const { apiGetMyRegistrations } = await import("../lib/api");
-          const regs = await apiGetMyRegistrations();
-          const map: Record<string, string> = {};
-          regs.forEach((r) => { map[r.event_id] = r.status; });
-          setMyRegs(map);
+  // ── Events query (SWR with Dexie initialData) ────────────────────────────
+  const { data: events = [], isLoading: eventsLoading, refetch: refetchEvents } = useQuery<ApiEvent[]>({
+    queryKey: ["events"],
+    networkMode: "offlineFirst",
+    staleTime: 30_000,
+    queryFn: async () => {
+      const evts = await apiListEvents();
+      cacheEvents(evts as any).catch(() => {});
+      return evts;
+    },
+    initialData: () => {
+      // Synchronously seed from Dexie while the network request is in-flight.
+      // React Query will replace this with fresh data as soon as the fetch resolves.
+      return undefined; // populated async below via placeholderData
+    },
+    placeholderData: () => [] as ApiEvent[],
+  });
+
+  // ── Skills query ─────────────────────────────────────────────────────────
+  const { data: skills = [] } = useQuery<Skill[]>({
+    queryKey: ["skills"],
+    networkMode: "offlineFirst",
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const sk = await apiListSkills();
+      cacheSkills(sk as any).catch(() => {});
+      return sk;
+    },
+    placeholderData: () => [] as Skill[],
+  });
+
+  // ── My registrations query (students only) ───────────────────────────────
+  const { data: myRegsRaw = [] } = useQuery({
+    queryKey: ["my-registrations"],
+    enabled: isStudent,
+    networkMode: "offlineFirst",
+    staleTime: 30_000,
+    queryFn: () => apiGetMyRegistrations(),
+    placeholderData: [],
+  });
+
+  // Map event_id → status for quick lookup
+  const myRegs: Record<string, string> = {};
+  myRegsRaw.forEach((r) => { myRegs[r.event_id] = r.status; });
+
+  const loading = eventsLoading;
+
+  /** Invalidate and refetch all events-related queries after a mutation. */
+  const loadEvents = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["events"] });
+    queryClient.invalidateQueries({ queryKey: ["my-registrations"] });
+  }, [queryClient]);
+
+  // Seed events from Dexie if query hasn't returned yet and we're offline
+  useEffect(() => {
+    if (!online && events.length === 0) {
+      db.events.orderBy("start_time").toArray().then((cached) => {
+        if (cached.length > 0) {
+          queryClient.setQueryData(["events"], cached as unknown as ApiEvent[]);
         }
-      } else {
-        // Offline fallback: load from Dexie cache
-        const cached = await db.events.orderBy("start_time").toArray();
-        setEvents(cached as unknown as ApiEvent[]);
-      }
-    } catch (err) {
-      toast.error("Could not load events");
-    } finally {
-      setLoading(false);
+      }).catch(() => {});
     }
-  }, [online, isStudent]);
+  }, [online, events.length, queryClient]);
 
-  useEffect(() => { loadEvents(); }, [loadEvents]);
-
-  // Open create modal — preload skills list
+  // Open create modal — skills already loaded by query above
   const openCreate = async () => {
-    if (skills.length === 0) {
-      const sk = await apiListSkills().catch(() => []);
-      setSkills(sk);
-    }
     setShowCreate(true);
   };
 

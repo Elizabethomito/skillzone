@@ -20,8 +20,11 @@ import Profile from "./pages/Profile";
 import Skills from "./pages/Skills";
 import Candidates from "./pages/Candidates";
 import NotFound from "./pages/NotFound";
+import { setQueryClient } from "./lib/sync";
 
 const queryClient = new QueryClient();
+// Phase 4: give sync.ts a reference so it can invalidate caches after sync runs.
+setQueryClient(queryClient);
 
 /** Redirect authenticated users away from public marketing pages. */
 function PublicOnlyRoute({ children }: { children: React.ReactNode }) {

@@ -4,6 +4,10 @@
  * Drains the Dexie sync_queue for the currently logged-in user by
  * calling the appropriate backend endpoints. Safe to call multiple times;
  * already-processed items are skipped.
+ *
+ * Phase 4: after a successful sync run, invalidates React Query caches for
+ * "events", "my-registrations", and "my-skills" so every page refetches
+ * fresh data automatically.
  */
 
 import {
@@ -17,6 +21,15 @@ import {
   apiRegisterForEvent,
   apiUnregisterFromEvent,
 } from "./api";
+import type { QueryClient } from "@tanstack/react-query";
+
+// Module-level QueryClient reference — set once from App.tsx / AuthProvider.
+let _queryClient: QueryClient | null = null;
+
+/** Call this once after the QueryClient is created (e.g. in App.tsx). */
+export function setQueryClient(qc: QueryClient): void {
+  _queryClient = qc;
+}
 
 export type SyncEventName =
   | "sync:start"
@@ -135,6 +148,14 @@ export async function runSync(userId: string): Promise<void> {
   } finally {
     syncing = false;
     emit("sync:done");
+
+    // Phase 4 — Invalidate React Query caches so all pages see fresh data
+    // after a sync run (regardless of whether items succeeded or failed).
+    if (_queryClient) {
+      _queryClient.invalidateQueries({ queryKey: ["events"] });
+      _queryClient.invalidateQueries({ queryKey: ["my-registrations"] });
+      _queryClient.invalidateQueries({ queryKey: ["my-skills"] });
+    }
   }
 }
 

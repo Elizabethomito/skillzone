@@ -8,9 +8,10 @@
  * values remain visible while offline (React state survives navigation).
  */
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { db, cacheUserSkills, cacheRegistrations } from "../db/database";
 import {
   apiGetMySkills,
   apiGetMyRegistrations,
@@ -31,6 +32,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useOnlineStatus } from "../hooks/useOnlineStatus";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 // ─── Shared stat card ─────────────────────────────────────────────────────────
 
@@ -65,27 +67,54 @@ function StatCard({
 // ─── Student dashboard ────────────────────────────────────────────────────────
 
 function StudentDashboard({ userId }: { userId: string }) {
-  const [skills, setSkills] = useState<UserSkill[]>([]);
-  const [regs, setRegs] = useState<RegistrationWithEvent[]>([]);
-  const [loading, setLoading] = useState(true);
   const online = useOnlineStatus();
+  const queryClient = useQueryClient();
 
+  // ── User skills (SWR: network-first, Dexie as placeholder) ───────────────
+  const { data: skills = [], isLoading: skillsLoading } = useQuery<UserSkill[]>({
+    queryKey: ["my-skills", userId],
+    networkMode: "offlineFirst",
+    staleTime: 30_000,
+    queryFn: async () => {
+      const s = await apiGetMySkills();
+      cacheUserSkills(s as any).catch(() => {});
+      return s;
+    },
+    placeholderData: () => {
+      // Will be replaced by the real async seed below if query is still loading
+      return [] as UserSkill[];
+    },
+  });
+
+  // ── My registrations (SWR: network-first, Dexie as placeholder) ──────────
+  const { data: regs = [], isLoading: regsLoading } = useQuery<RegistrationWithEvent[]>({
+    queryKey: ["my-registrations"],
+    networkMode: "offlineFirst",
+    staleTime: 30_000,
+    queryFn: async () => {
+      const r = await apiGetMyRegistrations();
+      cacheRegistrations(r as any).catch(() => {});
+      return r;
+    },
+    placeholderData: () => [] as RegistrationWithEvent[],
+  });
+
+  const loading = skillsLoading || regsLoading;
+
+  // Seed from Dexie while offline and query has no data yet
   useEffect(() => {
-    void (async () => {
-      try {
-        const [s, r] = await Promise.all([
-          apiGetMySkills(),
-          apiGetMyRegistrations(),
-        ]);
-        setSkills(s);
-        setRegs(r);
-      } catch {
-        /* offline — keep whatever is in state */
-      } finally {
-        setLoading(false);
+    if (online || (skills.length > 0 && regs.length > 0)) return;
+    db.user_skills.toArray().then((cached) => {
+      if (cached.length > 0) {
+        queryClient.setQueryData(["my-skills", userId], cached as unknown as UserSkill[]);
       }
-    })();
-  }, [userId]);
+    }).catch(() => {});
+    db.registrations.toArray().then((cached) => {
+      if (cached.length > 0) {
+        queryClient.setQueryData(["my-registrations"], cached as unknown as RegistrationWithEvent[]);
+      }
+    }).catch(() => {});
+  }, [online, skills.length, regs.length, userId, queryClient]);
 
   const upcoming = regs.filter(
     (r) => r.event_status === "upcoming" || r.event_status === "active"
@@ -236,24 +265,23 @@ function StudentDashboard({ userId }: { userId: string }) {
 // ─── Company dashboard ────────────────────────────────────────────────────────
 
 function CompanyDashboard({ userId }: { userId: string }) {
-  const [events, setEvents] = useState<ApiEvent[]>([]);
-  const [loading, setLoading] = useState(true);
   const online = useOnlineStatus();
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const all = await apiListEvents();
-        setEvents(all.filter((e) => e.host_id === userId));
-      } catch {
-        /* offline — keep state */
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [userId]);
+  // Re-uses the same ["events"] query key as Events.tsx — data is already
+  // in the React Query cache if the user visited Events first.
+  const { data: allEvents = [], isLoading: loading } = useQuery<ApiEvent[]>({
+    queryKey: ["events"],
+    networkMode: "offlineFirst",
+    staleTime: 30_000,
+    queryFn: async () => {
+      const evts = await apiListEvents();
+      return evts;
+    },
+    placeholderData: () => [] as ApiEvent[],
+  });
 
-  const active = events.filter((e) => e.status === "active");
+  const events   = allEvents.filter((e) => e.host_id === userId);
+  const active   = events.filter((e) => e.status === "active");
   const upcoming = events.filter((e) => e.status === "upcoming");
   const completed = events.filter((e) => e.status === "completed");
 
