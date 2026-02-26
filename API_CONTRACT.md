@@ -13,7 +13,7 @@
 3. [Auth Endpoints](#3-auth-endpoints)
 4. [Event Endpoints](#4-event-endpoints)
 5. [Skill Endpoints](#5-skill-endpoints)
-6. [Student Endpoints](#6-student-endpoints)
+6. [Student & Candidate Endpoints](#6-student--candidate-endpoints)
 7. [Offline Sync — Deep Dive](#7-offline-sync--deep-dive)
 8. [Admin Endpoints](#8-admin-endpoints)
 9. [Error Format](#9-error-format)
@@ -181,6 +181,20 @@ export interface CreateEventRequest {
 
 export interface UpdateEventStatusRequest {
   status: EventStatus;
+}
+
+/**
+ * Partial patch for PUT /api/events/{id}.
+ * All fields are optional — omitted fields are left unchanged.
+ */
+export interface UpdateEventRequest {
+  title?: string;
+  description?: string;
+  location?: string;
+  start_time?: string;    // ISO 8601
+  end_time?: string;
+  skill_ids?: string[];   // replaces the full skill list
+  capacity?: number;      // 0 = remove limit; shrink guard applies
 }
 
 export interface ResolveConflictRequest {
@@ -599,6 +613,101 @@ Register the authenticated student for an event.
 
 ---
 
+### `DELETE /api/events/{id}/register`
+
+Unregister (withdraw) the authenticated student from an event.
+
+- **Auth required:** Yes (student)
+- **Path parameter:** `id` — event UUID
+- **Request body:** None
+
+- **Success:** `204 No Content`
+
+> If the student had a `confirmed` registration and the event has a capacity
+> limit, `slots_remaining` is incremented automatically.
+
+| Status | Meaning |
+|--------|---------|
+| `401 Unauthorized` | Missing or invalid token |
+| `403 Forbidden` | Token belongs to a company account |
+| `404 Not Found` | No event, or student was not registered |
+
+---
+
+### `PUT /api/events/{id}`
+
+Update event details. All fields are optional — only provided fields are changed
+(partial patch semantics).
+
+- **Auth required:** Yes (company — must be the event host)
+- **Path parameter:** `id` — event UUID
+- **Request body:** `UpdateEventRequest` — any subset of `CreateEventRequest`
+
+```json
+{
+  "title": "Building Apps with AI Workshop — Extended",
+  "capacity": 30,
+  "skill_ids": ["<skill-uuid-1>", "<skill-uuid-2>"]
+}
+```
+
+> **Capacity shrink guard:** if the new `capacity` value is lower than the
+> current count of confirmed registrations, the server rejects the request
+> with `409 Conflict`.
+
+- **Success:** `200 OK` → `Event` (full updated event object)
+
+```json
+{
+  "id": "seed-event-aiwork-0000-0000-0000-000000000030",
+  "host_id": "seed-company-00000000-0000-0000-0000-000000000001",
+  "title": "Building Apps with AI Workshop — Extended",
+  "description": "...",
+  "location": "TechCorp HQ — Room 3B",
+  "start_time": "2026-02-26T09:00:00Z",
+  "end_time": "2026-02-26T17:00:00Z",
+  "status": "active",
+  "capacity": 30,
+  "slots_remaining": 29,
+  "created_at": "2026-02-01T00:00:00Z",
+  "updated_at": "2026-02-26T10:30:00Z",
+  "skills": [...]
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `400 Bad Request` | Invalid field values (e.g. end before start) |
+| `401 Unauthorized` | Missing or invalid token |
+| `403 Forbidden` | Token is not the host of this event |
+| `404 Not Found` | No event with that UUID |
+| `409 Conflict` | New capacity is lower than confirmed registration count |
+
+---
+
+### `DELETE /api/events/{id}/registrations/{reg_id}`
+
+Remove a specific registration from an event (host kicks a guest).
+
+- **Auth required:** Yes (company — must be the event host)
+- **Path parameters:**
+  - `id` — event UUID
+  - `reg_id` — registration UUID (obtained from `GET /api/events/{id}/registrations`)
+- **Request body:** None
+
+- **Success:** `204 No Content`
+
+> If the kicked registration was `confirmed` and the event has a capacity limit,
+> `slots_remaining` is incremented so another student can take the slot.
+
+| Status | Meaning |
+|--------|---------|
+| `401 Unauthorized` | Missing or invalid token |
+| `403 Forbidden` | Token is not the host of this event |
+| `404 Not Found` | Event or registration not found |
+
+---
+
 ## 5. Skill Endpoints
 
 ### `GET /api/skills`
@@ -657,7 +766,7 @@ Create a new skill badge. Skills are global — any event can link to them.
 
 ---
 
-## 6. Student Endpoints
+## 6. Student & Candidate Endpoints
 
 ### `GET /api/users/me/skills`
 
@@ -723,6 +832,73 @@ Return all events the student is registered for, with event metadata embedded.
 |--------|---------|
 | `401 Unauthorized` | Missing or invalid token |
 | `403 Forbidden` | Token belongs to a company account |
+
+---
+
+### `GET /api/users/students`
+
+Search for students who have earned specific skill badges. Designed for company
+accounts to discover qualified candidates.
+
+- **Auth required:** Yes (any role)
+- **Query parameter:** `skill_id` (optional, repeatable) — filter to students who hold this skill
+
+```
+GET /api/users/students
+GET /api/users/students?skill_id=<skill-uuid-1>
+```
+
+> **AND filtering with multiple skills:** pass the `skill_id` parameter multiple
+> times. Only students who hold **all** listed skills are returned.
+>
+> ```
+> GET /api/users/students?skill_id=<uuid-a>&skill_id=<uuid-b>
+> ```
+>
+> The PWA's Candidates page does client-side AND-intersection across multiple
+> API calls for UX reasons; the backend also supports multiple `skill_id` params
+> natively.
+
+- **Success:** `200 OK` → `StudentWithSkills[]`
+
+```typescript
+/** Extended User shape returned by candidate search. */
+export interface StudentWithSkills extends User {
+  skills: UserSkill[];   // all badges the student has earned (not just the filtered one)
+}
+```
+
+```json
+[
+  {
+    "id": "seed-amara-000000000-0000-0000-0000-000000000002",
+    "email": "amara@student.test",
+    "name": "Amara Osei",
+    "role": "student",
+    "created_at": "2026-02-25T10:00:00Z",
+    "updated_at": "2026-02-25T10:00:00Z",
+    "skills": [
+      {
+        "id": "us-uuid-1",
+        "user_id": "seed-amara-000000000-0000-0000-0000-000000000002",
+        "skill_id": "seed-skill-aidev--0000-0000-0000-000000000016",
+        "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
+        "awarded_at": "2026-02-26T12:00:00Z",
+        "skill": {
+          "id": "seed-skill-aidev--0000-0000-0000-000000000016",
+          "name": "AI Application Development",
+          "description": "Building production AI-powered applications",
+          "created_at": "2026-02-01T00:00:00Z"
+        }
+      }
+    ]
+  }
+]
+```
+
+| Status | Meaning |
+|--------|---------|
+| `401 Unauthorized` | Missing or invalid token |
 
 ---
 
