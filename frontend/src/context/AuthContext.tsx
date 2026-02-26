@@ -80,9 +80,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, []);
 
-  // Wire background sync to window "online" event
+  // Wire background sync to window "online" event.
+  // Return the cleanup fn so the old listener is removed before the new one
+  // is added if the user changes (e.g. sign-out then sign-in on same device).
   useEffect(() => {
-    initSyncListener(() => user?.id ?? null);
+    const cleanup = initSyncListener(() => user?.id ?? null);
+    return cleanup;
   }, [user]);
 
   const signUp = useCallback(

@@ -65,4 +65,21 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-}));
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // React core — changes rarely, long cache life
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          // UI component library — large but stable
+          "vendor-ui": ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-popover", "@radix-ui/react-select", "@radix-ui/react-tooltip",
+            "lucide-react", "react-hot-toast"],
+          // Heavy QR / camera deps — only used on Events page
+          "vendor-qr": ["qrcode", "html5-qrcode"],
+          // Offline data layer
+          "vendor-dexie": ["dexie"],
+        },
+      },
+    },
+  },}));

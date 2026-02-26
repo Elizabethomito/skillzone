@@ -138,10 +138,14 @@ export async function runSync(userId: string): Promise<void> {
   }
 }
 
-/** Wire up online/offline events to trigger auto-sync. */
-export function initSyncListener(getUserId: () => string | null) {
-  window.addEventListener("online", () => {
+/** Wire up online/offline events to trigger auto-sync.
+ *  Returns a cleanup function — call it to remove the listener.
+ *  (Prevents duplicate listeners when AuthContext re-renders.) */
+export function initSyncListener(getUserId: () => string | null): () => void {
+  const handler = () => {
     const uid = getUserId();
     if (uid) runSync(uid).catch(console.warn);
-  });
+  };
+  window.addEventListener("online", handler);
+  return () => window.removeEventListener("online", handler);
 }
