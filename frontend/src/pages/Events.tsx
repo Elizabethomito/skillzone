@@ -171,52 +171,222 @@ function CreateEditEventModal({ skills, existing, onClose, onSaved }: CreateEdit
   );
 }
 
-// ─── QR Display (Host) ────────────────────────────────────────────────────────
+// ─── Host QR Modal (Display + Scan in one) ───────────────────────────────────
+//
+// "Show QR" opens this modal.  The host sees the QR code on the Display tab.
+// Clicking the QR canvas (or the "Scan" tab) flips to a live camera scanner
+// so the host can verify the code works without needing a second device.
 
-function QRModal({ event, onClose }: { event: ApiEvent; onClose: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [token, setToken] = useState("");
+type HostQRTab = "display" | "scan";
+
+function HostQRModal({
+  event,
+  userId,
+  onClose,
+}: {
+  event: ApiEvent;
+  userId: string;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<HostQRTab>("display");
+
+  // ── Display tab state ────────────────────────────────────────────────────
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
   const [expiresIn, setExpiresIn] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [qrLoading, setQrLoading] = useState(true);
 
   useEffect(() => {
     apiGetCheckinCode(event.id)
       .then(async (res) => {
-        setToken(res.token);
         setExpiresIn(res.expires_in_seconds);
         const payload = JSON.stringify({ token: res.token });
         if (canvasRef.current) {
-          await QRCode.toCanvas(canvasRef.current, payload, { width: 280, margin: 2 });
+          await QRCode.toCanvas(canvasRef.current, payload, { width: 260, margin: 2 });
         }
       })
       .catch(() => toast.error("Could not generate QR code"))
-      .finally(() => setLoading(false));
+      .finally(() => setQrLoading(false));
   }, [event.id]);
+
+  // ── Scan tab state ───────────────────────────────────────────────────────
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const [scanned,   setScanned]  = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
+
+  // Mount / unmount the scanner only while the scan tab is active
+  useEffect(() => {
+    if (tab !== "scan") return;
+
+    const scanner = new Html5QrcodeScanner(
+      "host-qr-reader",
+      { fps: 10, qrbox: { width: 240, height: 240 } },
+      false,
+    );
+
+    scanner.render(
+      async (decodedText) => {
+        if (scanned) return;
+        setScanned(true);
+        scanner.clear().catch(() => {});
+
+        try {
+          const payload = JSON.parse(decodedText) as { token: string };
+          if (!payload.token) throw new Error("missing token");
+
+          const parts  = payload.token.split(".");
+          const claims = JSON.parse(atob(parts[1]));
+          const eventId: string = claims.event_id;
+
+          await enqueueCheckIn(userId, eventId, payload.token);
+          setScanResult("✓ Check-in queued. Badges awarded when synced.");
+          toast.success("QR scanned! Check-in queued.");
+
+          if (navigator.onLine) runSync(userId).catch(console.warn);
+        } catch (err) {
+          setScanResult(
+            `✗ Invalid QR: ${err instanceof Error ? err.message : "unknown error"}`,
+          );
+          toast.error("Invalid QR code");
+        }
+      },
+      () => { /* partial scan frames — normal */ },
+    );
+
+    scannerRef.current = scanner;
+    return () => { scanner.clear().catch(() => {}); };
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const resetScan = () => {
+    setScanned(false);
+    setScanResult(null);
+    setTab("scan"); // re-mount scanner via useEffect dep change → go to display first
+    // tiny trick: toggle away then back so useEffect re-runs
+    setTab("display");
+    setTimeout(() => setTab("scan"), 50);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-background p-6 shadow-xl text-center">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">Check-in QR Code</h2>
-          <button onClick={onClose} className="rounded p-1 hover:bg-muted"><X className="h-5 w-5" /></button>
-        </div>
-        <p className="mb-4 text-sm text-muted-foreground">{event.title}</p>
-        {loading ? (
-          <div className="flex h-[280px] items-center justify-center">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      <div className="w-full max-w-sm rounded-2xl bg-background shadow-xl overflow-hidden">
+
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-bold leading-tight">Check-in QR</h2>
+            <p className="text-xs text-muted-foreground truncate max-w-[220px]">{event.title}</p>
           </div>
-        ) : (
-          <canvas ref={canvasRef} className="mx-auto rounded-lg" />
+          <button onClick={onClose} className="rounded p-1 hover:bg-muted">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* ── Tabs ── */}
+        <div className="flex border-b border-border">
+          <button
+            onClick={() => setTab("display")}
+            className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+              tab === "display"
+                ? "border-b-2 border-primary text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <QrCode className="mr-1.5 inline h-3.5 w-3.5" />
+            Show QR
+          </button>
+          <button
+            onClick={() => setTab("scan")}
+            className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+              tab === "scan"
+                ? "border-b-2 border-primary text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Scan className="mr-1.5 inline h-3.5 w-3.5" />
+            Scan
+          </button>
+        </div>
+
+        {/* ── Display tab ── */}
+        {tab === "display" && (
+          <div className="flex flex-col items-center px-5 pb-5 pt-4 text-center">
+            {qrLoading ? (
+              <div className="flex h-[260px] w-[260px] items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              </div>
+            ) : (
+              /* Clicking the QR canvas opens the scanner */
+              <button
+                onClick={() => setTab("scan")}
+                title="Click to open scanner"
+                className="group relative rounded-xl overflow-hidden ring-2 ring-transparent hover:ring-primary transition-all"
+              >
+                <canvas ref={canvasRef} className="block" />
+                {/* Hover overlay */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/0 group-hover:bg-black/40 transition-all rounded-xl">
+                  <Scan className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                  <span className="text-xs font-semibold text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow">
+                    Click to scan
+                  </span>
+                </div>
+              </button>
+            )}
+
+            {expiresIn > 0 && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                <Clock className="mr-1 inline h-3 w-3" />
+                Valid for {Math.floor(expiresIn / 3600)} hr
+                {Math.floor(expiresIn / 3600) !== 1 ? "s" : ""} — display on projector
+              </p>
+            )}
+            <p className="mt-1.5 text-xs text-green-600 font-medium">
+              Students scan while offline — badges sync later ✓
+            </p>
+            <p className="mt-2 text-[11px] text-muted-foreground italic">
+              Tap the QR code above to open the scanner
+            </p>
+          </div>
         )}
-        {expiresIn > 0 && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            <Clock className="mr-1 inline h-3 w-3" />
-            Valid for {Math.floor(expiresIn / 3600)} hours — display on projector screen
-          </p>
+
+        {/* ── Scan tab ── */}
+        {tab === "scan" && (
+          <div className="px-5 pb-5 pt-4">
+            {!scanned ? (
+              <>
+                <p className="mb-3 text-sm text-muted-foreground text-center">
+                  Point the camera at a student's QR code to check them in.
+                </p>
+                <div id="host-qr-reader" className="rounded-lg overflow-hidden" />
+              </>
+            ) : (
+              <div
+                className={`rounded-xl p-4 text-sm font-medium text-center ${
+                  scanResult?.startsWith("✓")
+                    ? "bg-green-50 text-green-700"
+                    : "bg-red-50 text-red-700"
+                }`}
+              >
+                {scanResult}
+              </div>
+            )}
+
+            <div className="mt-4 flex gap-2">
+              {scanned && (
+                <button
+                  onClick={resetScan}
+                  className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Scan another
+                </button>
+              )}
+              <button
+                onClick={() => setTab("display")}
+                className="flex-1 rounded-lg border border-input py-2 text-sm hover:bg-muted"
+              >
+                Back to QR
+              </button>
+            </div>
+          </div>
         )}
-        <p className="mt-2 text-xs text-green-600 font-medium">
-          Students scan while offline — they sync later ✓
-        </p>
       </div>
     </div>
   );
@@ -585,7 +755,9 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
       </div>
 
       {/* Sub-modals */}
-      {showQR && <QRModal event={event} onClose={() => setShowQR(false)} />}
+      {showQR && (
+        <HostQRModal event={event} userId={userId} onClose={() => setShowQR(false)} />
+      )}
       {showScanner && <QRScannerModal userId={userId} onClose={() => setShowScanner(false)} />}
       {showGuests && <ManageGuestsModal event={event} onClose={() => setShowGuests(false)} />}
       {showEdit && (
