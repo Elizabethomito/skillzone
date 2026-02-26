@@ -312,3 +312,184 @@ func TestGetEventRegistrations(t *testing.T) {
 		t.Errorf("expected 1 registration, got %d", len(result))
 	}
 }
+
+func TestUpdateEvent_Success(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	newTitle := "Updated Title"
+	newDesc := "Updated description"
+	req := httptest.NewRequest(http.MethodPut, "/api/events/"+eventID,
+		jsonBody(t, models.UpdateEventRequest{
+			Title:       newTitle,
+			Description: &newDesc,
+		}))
+	req.SetPathValue("id", eventID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.UpdateEvent(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var e models.Event
+	json.NewDecoder(rec.Body).Decode(&e)
+	if e.Title != newTitle {
+		t.Errorf("expected title %q, got %q", newTitle, e.Title)
+	}
+	if e.Description != newDesc {
+		t.Errorf("expected description %q, got %q", newDesc, e.Description)
+	}
+}
+
+func TestUpdateEvent_ForbiddenForNonHost(t *testing.T) {
+	srv := newTestServer(t)
+	hostID := seedCompanyUser(t, srv)
+	otherCompanyID := seedCompanyUser(t, srv)
+	eventID, _ := seedEvent(t, srv, hostID)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/events/"+eventID,
+		jsonBody(t, models.UpdateEventRequest{Title: "Hijacked"}))
+	req.SetPathValue("id", eventID)
+	req = ctxWithUser(req, otherCompanyID, "company")
+	rec := httptest.NewRecorder()
+	srv.UpdateEvent(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestUnregisterFromEvent_Success(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	// Register first.
+	regID := uuid.NewString()
+	srv.DB.Exec(`INSERT INTO registrations (id, event_id, student_id, status) VALUES (?, ?, ?, 'confirmed')`,
+		regID, eventID, studentID)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/events/"+eventID+"/register", nil)
+	req.SetPathValue("id", eventID)
+	req = ctxWithUser(req, studentID, "student")
+	rec := httptest.NewRecorder()
+	srv.UnregisterFromEvent(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	srv.DB.QueryRow(`SELECT COUNT(*) FROM registrations WHERE id = ?`, regID).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected registration to be deleted, but still exists")
+	}
+}
+
+func TestUnregisterFromEvent_RestoresSlot(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEventWithCapacity(t, srv, companyID, 1)
+
+	// Consume the slot.
+	srv.DB.Exec(`INSERT INTO registrations (id, event_id, student_id, status) VALUES (?, ?, ?, 'confirmed')`,
+		uuid.NewString(), eventID, studentID)
+	srv.DB.Exec(`UPDATE events SET slots_remaining = 0 WHERE id = ?`, eventID)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/events/"+eventID+"/register", nil)
+	req.SetPathValue("id", eventID)
+	req = ctxWithUser(req, studentID, "student")
+	rec := httptest.NewRecorder()
+	srv.UnregisterFromEvent(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var slots int
+	srv.DB.QueryRow(`SELECT slots_remaining FROM events WHERE id = ?`, eventID).Scan(&slots)
+	if slots != 1 {
+		t.Errorf("expected slots_remaining=1 after unregister, got %d", slots)
+	}
+}
+
+func TestKickRegistration_Success(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	regID := uuid.NewString()
+	srv.DB.Exec(`INSERT INTO registrations (id, event_id, student_id, status) VALUES (?, ?, ?, 'confirmed')`,
+		regID, eventID, studentID)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/events/"+eventID+"/registrations/"+regID, nil)
+	req.SetPathValue("id", eventID)
+	req.SetPathValue("reg_id", regID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.KickRegistration(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	srv.DB.QueryRow(`SELECT COUNT(*) FROM registrations WHERE id = ?`, regID).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected registration to be deleted")
+	}
+}
+
+func TestSearchStudents_NoFilter(t *testing.T) {
+	srv := newTestServer(t)
+	_ = seedStudentUser(t, srv)
+	_ = seedStudentUser(t, srv)
+	companyID := seedCompanyUser(t, srv)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/students", nil)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.SearchStudents(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var result []map[string]any
+	json.NewDecoder(rec.Body).Decode(&result)
+	if len(result) < 2 {
+		t.Errorf("expected at least 2 students, got %d", len(result))
+	}
+}
+
+func TestSearchStudents_BySkill(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentWithSkill := seedStudentUser(t, srv)
+	_ = seedStudentUser(t, srv) // student without the skill
+	skillID := seedSkill(t, srv, "TestSkill-"+uuid.NewString())
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	// Award the skill to the first student.
+	srv.DB.Exec(`INSERT OR IGNORE INTO event_skills (event_id, skill_id) VALUES (?, ?)`, eventID, skillID)
+	srv.DB.Exec(`INSERT INTO user_skills (id, user_id, skill_id, event_id, awarded_at) VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), studentWithSkill, skillID, eventID, time.Now().UTC())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/students?skill_id="+skillID, nil)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.SearchStudents(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var result []map[string]any
+	json.NewDecoder(rec.Body).Decode(&result)
+	if len(result) != 1 {
+		t.Errorf("expected exactly 1 student with that skill, got %d", len(result))
+	}
+}

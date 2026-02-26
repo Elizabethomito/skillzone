@@ -122,6 +122,8 @@ func main() {
 	// Company-only routes.
 	mux.Handle("POST /api/events",
 		auth(onlyCompany(http.HandlerFunc(srv.CreateEvent))))
+	mux.Handle("PUT /api/events/{id}",
+		auth(onlyCompany(http.HandlerFunc(srv.UpdateEvent))))
 	mux.Handle("GET /api/events/{id}/checkin-code",
 		auth(onlyCompany(http.HandlerFunc(srv.GetEventCheckInCode))))
 	mux.Handle("PATCH /api/events/{id}/status",
@@ -130,12 +132,18 @@ func main() {
 		auth(onlyCompany(http.HandlerFunc(srv.GetEventRegistrations))))
 	mux.Handle("PATCH /api/events/{id}/registrations/{reg_id}",
 		auth(onlyCompany(http.HandlerFunc(srv.ResolveRegistrationConflict))))
+	mux.Handle("DELETE /api/events/{id}/registrations/{reg_id}",
+		auth(onlyCompany(http.HandlerFunc(srv.KickRegistration))))
 	mux.Handle("POST /api/skills",
 		auth(onlyCompany(http.HandlerFunc(srv.CreateSkill))))
+	mux.Handle("GET /api/users/students",
+		auth(onlyCompany(http.HandlerFunc(srv.SearchStudents))))
 
 	// Student-only routes.
 	mux.Handle("POST /api/events/{id}/register",
 		auth(onlyStudent(http.HandlerFunc(srv.RegisterForEvent))))
+	mux.Handle("DELETE /api/events/{id}/register",
+		auth(onlyStudent(http.HandlerFunc(srv.UnregisterFromEvent))))
 	// ↓ Core local-first sync endpoint — see handlers/sync.go
 	mux.Handle("POST /api/sync/attendance",
 		auth(onlyStudent(http.HandlerFunc(srv.SyncAttendance))))

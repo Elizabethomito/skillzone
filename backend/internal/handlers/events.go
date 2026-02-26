@@ -496,6 +496,280 @@ func (s *Server) RegisterForEvent(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusCreated, reg)
 }
 
+// UpdateEvent handles PUT /api/events/{id}  (host only)
+//
+// Allows the event host to adjust title, description, location, start/end
+// times, capacity, and linked skills. Partial updates are supported — omitted
+// fields retain their current values. Capacity can be increased but not
+// decreased below the number of confirmed registrations.
+func (s *Server) UpdateEvent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	hostID := middleware.GetUserID(r.Context())
+
+	// Verify ownership and fetch current values.
+	var e models.Event
+	var cap, slots sql.NullInt64
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT id, host_id, title, description, location, start_time, end_time,
+		        status, check_in_code, capacity, slots_remaining, created_at, updated_at
+		 FROM events WHERE id = ?`, id,
+	).Scan(&e.ID, &e.HostID, &e.Title, &e.Description, &e.Location,
+		&e.StartTime, &e.EndTime, &e.Status, &e.CheckInCode,
+		&cap, &slots, &e.CreatedAt, &e.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "event not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if e.HostID != hostID {
+		respondError(w, http.StatusForbidden, "you are not the host of this event")
+		return
+	}
+
+	// Decode partial update request.
+	var req models.UpdateEventRequest
+	if err := decode(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Apply patch: only update fields that are provided.
+	if t := strings.TrimSpace(req.Title); t != "" {
+		e.Title = t
+	}
+	if req.Description != nil {
+		e.Description = *req.Description
+	}
+	if req.Location != nil {
+		e.Location = *req.Location
+	}
+	if req.StartTime != nil {
+		e.StartTime = *req.StartTime
+	}
+	if req.EndTime != nil {
+		e.EndTime = *req.EndTime
+	}
+	if !e.EndTime.After(e.StartTime) {
+		respondError(w, http.StatusBadRequest, "end_time must be after start_time")
+		return
+	}
+	now := time.Now().UTC()
+	e.UpdatedAt = now
+
+	// Capacity update: set or clear.
+	newCap := cap
+	newSlots := slots
+	if req.Capacity != nil {
+		if *req.Capacity <= 0 {
+			// Clear capacity (unlimited)
+			newCap = sql.NullInt64{}
+			newSlots = sql.NullInt64{}
+		} else {
+			// Count confirmed registrations to prevent shrinking below current count.
+			var confirmed int64
+			_ = s.DB.QueryRowContext(r.Context(),
+				`SELECT COUNT(*) FROM registrations WHERE event_id = ? AND status = 'confirmed'`, id,
+			).Scan(&confirmed)
+			if int64(*req.Capacity) < confirmed {
+				respondError(w, http.StatusBadRequest, "capacity cannot be less than current confirmed registrations")
+				return
+			}
+			newCap = sql.NullInt64{Int64: int64(*req.Capacity), Valid: true}
+			// Adjust slots_remaining proportionally.
+			if cap.Valid {
+				used := cap.Int64 - slots.Int64
+				newSlots = sql.NullInt64{Int64: int64(*req.Capacity) - used, Valid: true}
+				if newSlots.Int64 < 0 {
+					newSlots.Int64 = 0
+				}
+			} else {
+				newSlots = sql.NullInt64{Int64: int64(*req.Capacity), Valid: true}
+			}
+		}
+	}
+
+	tx, err := s.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	_, err = tx.ExecContext(r.Context(),
+		`UPDATE events SET title=?, description=?, location=?, start_time=?, end_time=?,
+		  capacity=?, slots_remaining=?, updated_at=?
+		 WHERE id=?`,
+		e.Title, e.Description, e.Location, e.StartTime, e.EndTime,
+		newCap, newSlots, now, id,
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "could not update event")
+		return
+	}
+
+	// Replace skill links if provided.
+	if req.SkillIDs != nil {
+		if _, err = tx.ExecContext(r.Context(), `DELETE FROM event_skills WHERE event_id = ?`, id); err != nil {
+			respondError(w, http.StatusInternalServerError, "could not update skills")
+			return
+		}
+		for _, skillID := range *req.SkillIDs {
+			if _, err = tx.ExecContext(r.Context(),
+				`INSERT OR IGNORE INTO event_skills (event_id, skill_id) VALUES (?, ?)`, id, skillID,
+			); err != nil {
+				respondError(w, http.StatusInternalServerError, "could not link skill")
+				return
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	// Re-read the full event to return accurate capacity/slots values.
+	var updated models.Event
+	_ = s.DB.QueryRowContext(r.Context(),
+		`SELECT id, host_id, title, description, location, start_time, end_time, status,
+		        capacity, slots_remaining, created_at, updated_at
+		 FROM events WHERE id = ?`, id,
+	).Scan(&updated.ID, &updated.HostID, &updated.Title, &updated.Description,
+		&updated.Location, &updated.StartTime, &updated.EndTime, &updated.Status,
+		&updated.Capacity, &updated.SlotsRemaining, &updated.CreatedAt, &updated.UpdatedAt)
+	updated.Skills = s.fetchEventSkills(r, id)
+	respond(w, http.StatusOK, updated)
+}
+
+// UnregisterFromEvent handles DELETE /api/events/{id}/register  (student only)
+//
+// Removes the student's registration from the event and restores the slot if
+// the registration was confirmed and the event has a capacity limit.
+func (s *Server) UnregisterFromEvent(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("id")
+	studentID := middleware.GetUserID(r.Context())
+
+	// Find the registration.
+	var regID string
+	var regStatus models.RegistrationStatus
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT id, status FROM registrations WHERE event_id = ? AND student_id = ?`,
+		eventID, studentID,
+	).Scan(&regID, &regStatus)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "registration not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	tx, err := s.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err = tx.ExecContext(r.Context(),
+		`DELETE FROM registrations WHERE id = ?`, regID,
+	); err != nil {
+		respondError(w, http.StatusInternalServerError, "could not remove registration")
+		return
+	}
+
+	// Restore slot if this was a confirmed registration for a capacity-limited event.
+	if regStatus == models.RegistrationConfirmed {
+		tx.ExecContext(r.Context(), //nolint:errcheck
+			`UPDATE events SET slots_remaining = slots_remaining + 1, updated_at = ?
+			 WHERE id = ? AND capacity IS NOT NULL`,
+			time.Now().UTC(), eventID,
+		)
+	}
+
+	if err := tx.Commit(); err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// KickRegistration handles DELETE /api/events/{id}/registrations/{reg_id}  (host only)
+//
+// Allows the host to remove any registration (regardless of status) and
+// restore the slot if applicable.
+func (s *Server) KickRegistration(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("id")
+	regID := r.PathValue("reg_id")
+	hostID := middleware.GetUserID(r.Context())
+
+	// Verify host ownership.
+	var dbHostID string
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT host_id FROM events WHERE id = ?`, eventID,
+	).Scan(&dbHostID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "event not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if dbHostID != hostID {
+		respondError(w, http.StatusForbidden, "you are not the host of this event")
+		return
+	}
+
+	// Get the registration status before deleting.
+	var regStatus models.RegistrationStatus
+	err = s.DB.QueryRowContext(r.Context(),
+		`SELECT status FROM registrations WHERE id = ? AND event_id = ?`, regID, eventID,
+	).Scan(&regStatus)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "registration not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	tx, err := s.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err = tx.ExecContext(r.Context(),
+		`DELETE FROM registrations WHERE id = ?`, regID,
+	); err != nil {
+		respondError(w, http.StatusInternalServerError, "could not remove registration")
+		return
+	}
+
+	if regStatus == models.RegistrationConfirmed {
+		tx.ExecContext(r.Context(), //nolint:errcheck
+			`UPDATE events SET slots_remaining = slots_remaining + 1, updated_at = ?
+			 WHERE id = ? AND capacity IS NOT NULL`,
+			time.Now().UTC(), eventID,
+		)
+	}
+
+	if err := tx.Commit(); err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // fetchEventSkills is an internal helper used by CreateEvent, ListEvents and
 // GetEvent to load the skills attached to an event via the event_skills join table.
 func (s *Server) fetchEventSkills(r *http.Request, eventID string) []models.Skill {

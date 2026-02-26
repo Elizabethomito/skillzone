@@ -186,6 +186,20 @@ type UpdateEventStatusRequest struct {
 	Status EventStatus `json:"status"`
 }
 
+// UpdateEventRequest is used by PUT /api/events/{id}
+// All fields are optional — omitted fields retain their current values.
+type UpdateEventRequest struct {
+	Title       string     `json:"title"`
+	Description *string    `json:"description"`
+	Location    *string    `json:"location"`
+	StartTime   *time.Time `json:"start_time"`
+	EndTime     *time.Time `json:"end_time"`
+	// SkillIDs, if non-nil, REPLACES the current skill links entirely.
+	SkillIDs *[]string `json:"skill_ids"`
+	// Capacity: set to 0 or negative to make unlimited; nil = no change.
+	Capacity *int `json:"capacity"`
+}
+
 // ResolveConflictRequest is used by PATCH /api/events/{id}/registrations/{reg_id}
 // The host either confirms the registration (taking the last slot) or waitlists it.
 type ResolveConflictRequest struct {
