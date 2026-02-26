@@ -3,7 +3,7 @@
 SkillZone is a Progressive Web App that helps youths gain and track various hard and soft skills they acquire throughout the years. 
 The app is a credible way for potential employers to verify that employee candidates actually have the set of skills they are looking for. Users can find internships, workshops, seminars and short courses, provided by trustworthy hosts, via the app where they can grow their skills. Completing these “events” earns a user skill badges that can be used as referral points.
 
- SkillZone allows students to:
+ #### SkillZone allows students to:
  
 Attend events and internships
 
@@ -17,7 +17,7 @@ No internet is required at the venue.
 
 # The Problem
 
-Many young people:
+-Many young people:
 
 Attend internships and skill events
 
@@ -91,6 +91,7 @@ SQLite Database
 ### Golden Rule:
 
 UI never waits for the network.
+
 
 All actions:
 
@@ -255,7 +256,8 @@ shadcn-ui
 
 Tailwind CSS
 
-The frontend:
+
+#### The frontend:
 
 Uses IndexedDB for local storage
 
@@ -283,7 +285,8 @@ By default, Vite runs at:
 ```
 http://localhost:5173
 ```
-# Connecting Frontend to Backend
+
+## Connecting Frontend to Backend
 
 Make sure the backend is running:
 
@@ -291,7 +294,8 @@ Make sure the backend is running:
 http://localhost:8080
 ```
 
-# PWA Features
+
+## PWA Features
 
 Installable
 
