@@ -1,22 +1,25 @@
-import { Link } from 'react-router-dom';
-import { Award, CheckCircle, Users, ArrowRight } from 'lucide-react';
-import heroBg from '../assets/hero-bg.jpg';
+import { Link } from "react-router-dom";
+import { Award, CheckCircle, Users, ArrowRight } from "lucide-react";
+import heroBg from "../assets/hero-bg.jpg";
 
 const steps = [
   {
     icon: Users,
-    title: 'Join Events',
-    description: 'Discover and participate in tech events, internships, and skill-building opportunities.',
+    title: "Join Events",
+    description:
+      "Discover and participate in tech events, internships, and skill-building opportunities.",
   },
   {
     icon: CheckCircle,
-    title: 'Get Verified',
-    description: 'Organizations verify your participation and confirm your skills completion.',
+    title: "Get Verified",
+    description:
+      "Organizations verify your participation and confirm your skills completion.",
   },
   {
     icon: Award,
-    title: 'Earn Badges',
-    description: 'Receive verified badges that showcase your skills to potential employers.',
+    title: "Earn Badges",
+    description:
+      "Receive verified badges that showcase your skills to potential employers.",
   },
 ];
 
@@ -31,11 +34,13 @@ export default function Home() {
         <div className="absolute inset-0 hero-gradient opacity-85" />
         <div className="relative z-10 container text-center">
           <h1 className="animate-fade-in mb-6 text-4xl font-extrabold leading-tight text-primary-foreground md:text-6xl lg:text-7xl">
-            Verify Your Skills.<br />Unlock Opportunities.
+            Verify Your Skills.
+            <br />
+            Unlock Opportunities.
           </h1>
           <p className="animate-fade-in-delay mx-auto mb-10 max-w-2xl text-lg text-primary-foreground/80 md:text-xl">
-            SkillZone connects individuals with events and organizations to build
-            credible, verified skill profiles that employers trust.
+            SkillZone connects individuals with events and organizations to
+            build credible, verified skill profiles that employers trust.
           </p>
           <div className="animate-fade-in-delay flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link
@@ -61,9 +66,10 @@ export default function Home() {
             What is <span className="text-gradient">SkillZone</span>?
           </h2>
           <p className="text-lg leading-relaxed text-muted-foreground">
-            SkillZone is a skill verification and opportunity platform that bridges the gap
-            between talent and employers. Attend events, earn verified badges, and build a
-            credible professional profile — all in one place.
+            SkillZone is a skill verification and opportunity platform that
+            bridges the gap between talent and employers. Attend events, earn
+            verified badges, and build a credible professional profile — all
+            in one place.
           </p>
         </div>
       </section>
@@ -83,8 +89,12 @@ export default function Home() {
                 <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-accent">
                   <step.icon className="h-7 w-7 text-accent-foreground" />
                 </div>
-                <h3 className="mb-2 text-xl font-semibold text-foreground">{step.title}</h3>
-                <p className="text-sm leading-relaxed text-muted-foreground">{step.description}</p>
+                <h3 className="mb-2 text-xl font-semibold text-foreground">
+                  {step.title}
+                </h3>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {step.description}
+                </p>
               </div>
             ))}
           </div>
@@ -98,8 +108,8 @@ export default function Home() {
             Ready to Build Your Credibility?
           </h2>
           <p className="mx-auto mb-8 max-w-xl text-primary-foreground/80">
-            Join SkillZone today and start earning verified skill badges that make your
-            profile stand out to employers.
+            Join SkillZone today and start earning verified skill badges that
+            make your profile stand out to employers.
           </p>
           <Link
             to="/signup"

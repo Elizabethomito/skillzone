@@ -1,33 +1,29 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { LogIn } from 'lucide-react';
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { LogIn } from "lucide-react";
 
 export default function SignIn() {
   const { signIn } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError("");
     if (!email.trim() || !password) {
-      setError('Please fill in all fields.');
+      setError("Please fill in all fields.");
       return;
     }
     setSubmitting(true);
     try {
-      const user = await signIn(email.trim(), password);
-      if (user) {
-        navigate('/dashboard');
-      } else {
-        setError('Invalid email or password.');
-      }
-    } catch {
-      setError('An error occurred. Please try again.');
+      await signIn(email.trim(), password);
+      navigate("/dashboard");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Invalid email or password.");
     } finally {
       setSubmitting(false);
     }
@@ -41,7 +37,9 @@ export default function SignIn() {
             <LogIn className="h-6 w-6 text-primary-foreground" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">Welcome Back</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sign in to your SkillZone account</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Sign in to your SkillZone account
+          </p>
         </div>
 
         {error && (
@@ -52,7 +50,9 @@ export default function SignIn() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-foreground">Email</label>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Email
+            </label>
             <input
               type="email"
               value={email}
@@ -62,7 +62,9 @@ export default function SignIn() {
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-foreground">Password</label>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Password
+            </label>
             <input
               type="password"
               value={password}
@@ -76,12 +78,20 @@ export default function SignIn() {
             disabled={submitting}
             className="w-full rounded-lg bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
           >
-            {submitting ? 'Signing in…' : 'Sign In'}
+            {submitting ? "Signing in…" : "Sign In"}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-muted-foreground">
-          Don't have an account?{' '}
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          Demo accounts:{" "}
+          <code className="rounded bg-muted px-1">amara@student.test</code> or{" "}
+          <code className="rounded bg-muted px-1">host@techcorp.test</code> —
+          password{" "}
+          <code className="rounded bg-muted px-1">demo1234</code>
+        </p>
+
+        <p className="mt-4 text-center text-sm text-muted-foreground">
+          Don&apos;t have an account?{" "}
           <Link to="/signup" className="font-medium text-primary hover:underline">
             Sign Up
           </Link>

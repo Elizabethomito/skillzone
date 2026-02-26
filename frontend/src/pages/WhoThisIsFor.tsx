@@ -1,18 +1,31 @@
-import { UserCheck, Building2, Award, Search, Calendar, ShieldCheck } from 'lucide-react';
+import {
+  UserCheck,
+  Building2,
+  Award,
+  Search,
+  Calendar,
+  ShieldCheck,
+} from "lucide-react";
 
-const individualFeatures = [
-  { icon: Calendar, title: 'Attend Events', desc: 'Join tech meetups, medical workshops, and more.' },
-  { icon: Award, title: 'Earn Badges', desc: 'Get verified credentials for completed events.' },
-  { icon: UserCheck, title: 'Build Credibility', desc: 'Show employers proof of your real skills.' },
+interface Feature {
+  icon: React.ElementType;
+  title: string;
+  desc: string;
+}
+
+const individualFeatures: Feature[] = [
+  { icon: Calendar, title: "Attend Events", desc: "Join tech meetups, medical workshops, and more." },
+  { icon: Award, title: "Earn Badges", desc: "Get verified credentials for completed events." },
+  { icon: UserCheck, title: "Build Credibility", desc: "Show employers proof of your real skills." },
 ];
 
-const orgFeatures = [
-  { icon: Calendar, title: 'Post Events', desc: 'Create and manage events, internships, and jobs.' },
-  { icon: Search, title: 'Discover Talent', desc: 'Find skilled participants from your event pool.' },
-  { icon: ShieldCheck, title: 'Verify Participation', desc: 'Confirm attendance and issue skill badges.' },
+const orgFeatures: Feature[] = [
+  { icon: Calendar, title: "Post Events", desc: "Create and manage events, internships, and jobs." },
+  { icon: Search, title: "Discover Talent", desc: "Find skilled participants from your event pool." },
+  { icon: ShieldCheck, title: "Verify Participation", desc: "Confirm attendance and issue skill badges." },
 ];
 
-function FeatureCard({ icon: Icon, title, desc }) {
+function FeatureCard({ icon: Icon, title, desc }: Feature) {
   return (
     <div className="flex items-start gap-4 rounded-xl bg-background p-5 card-shadow">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent">
@@ -34,7 +47,8 @@ export default function WhoThisIsFor() {
           Who Is <span className="text-gradient">SkillZone</span> For?
         </h1>
         <p className="mx-auto mb-16 max-w-2xl text-center text-lg text-muted-foreground">
-          Whether you're building your career or discovering top talent, SkillZone has you covered.
+          Whether you're building your career or discovering top talent,
+          SkillZone has you covered.
         </p>
 
         <div className="grid gap-12 lg:grid-cols-2">
@@ -44,7 +58,9 @@ export default function WhoThisIsFor() {
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary">
                 <UserCheck className="h-6 w-6 text-primary-foreground" />
               </div>
-              <h2 className="text-2xl font-bold text-foreground">For Individuals</h2>
+              <h2 className="text-2xl font-bold text-foreground">
+                For Individuals
+              </h2>
             </div>
             <div className="space-y-4">
               {individualFeatures.map((f, i) => (
@@ -59,7 +75,9 @@ export default function WhoThisIsFor() {
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary">
                 <Building2 className="h-6 w-6 text-primary-foreground" />
               </div>
-              <h2 className="text-2xl font-bold text-foreground">For Organizations</h2>
+              <h2 className="text-2xl font-bold text-foreground">
+                For Organizations
+              </h2>
             </div>
             <div className="space-y-4">
               {orgFeatures.map((f, i) => (
