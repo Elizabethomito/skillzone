@@ -115,6 +115,7 @@ SeedSkillHealthcareAIID     = "seed-skill-hcai---0000-0000-0000-000000000304"
 // Skills — Business & Soft Skills
 SeedSkillEntrepreneurshipID = "seed-skill-entrepr-0000-0000-0000-000000000400"
 SeedSkillProjectMgmtID     = "seed-skill-projmgt-0000-0000-0000-000000000401"
+SeedSkillSystemDesignID     = "seed-skill-sysdes-0000-0000-0000-000000000402"
 
 // Events — TechCorp Africa
 SeedEventPythonID     = "seed-event-python-0000-0000-0000-000000000500"
@@ -248,6 +249,7 @@ for _, sk := range []skillRow{
 // Business & Soft Skills
 {SeedSkillEntrepreneurshipID, "Entrepreneurship & Innovation", "Lean startup methods, business model canvas, pitching"},
 {SeedSkillProjectMgmtID, "Project Management", "Agile/Scrum frameworks, sprint planning, and delivery metrics"},
+{SeedSkillSystemDesignID, "System Design", "Scalable distributed systems, API contracts, and architecture patterns"},
 } {
 s.DB.ExecContext(r.Context(),
 `INSERT OR IGNORE INTO skills (id, name, description, created_at) VALUES (?, ?, ?, ?)`,
