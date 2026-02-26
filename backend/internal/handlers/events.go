@@ -701,8 +701,10 @@ func (s *Server) UnregisterFromEvent(w http.ResponseWriter, r *http.Request) {
 
 // KickRegistration handles DELETE /api/events/{id}/registrations/{reg_id}  (host only)
 //
-// Allows the host to remove any registration (regardless of status) and
-// restore the slot if applicable.
+// Instead of deleting the row, the registration is marked as "rejected" so
+// that the host can see a rejected list and re-add students if they were
+// removed by mistake (via ReAddRegistration).
+// The slot is restored if the registration was previously confirmed.
 func (s *Server) KickRegistration(w http.ResponseWriter, r *http.Request) {
 	eventID := r.PathValue("id")
 	regID := r.PathValue("reg_id")
@@ -726,7 +728,7 @@ func (s *Server) KickRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the registration status before deleting.
+	// Get the registration status before updating.
 	var regStatus models.RegistrationStatus
 	err = s.DB.QueryRowContext(r.Context(),
 		`SELECT status FROM registrations WHERE id = ? AND event_id = ?`, regID, eventID,
@@ -740,6 +742,11 @@ func (s *Server) KickRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if regStatus == models.RegistrationRejected {
+		respondError(w, http.StatusConflict, "registration is already rejected")
+		return
+	}
+
 	tx, err := s.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "database error")
@@ -747,18 +754,21 @@ func (s *Server) KickRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	now := time.Now().UTC()
 	if _, err = tx.ExecContext(r.Context(),
-		`DELETE FROM registrations WHERE id = ?`, regID,
+		`UPDATE registrations SET status = 'rejected', kicked_at = ? WHERE id = ?`,
+		now, regID,
 	); err != nil {
-		respondError(w, http.StatusInternalServerError, "could not remove registration")
+		respondError(w, http.StatusInternalServerError, "could not reject registration")
 		return
 	}
 
+	// Restore slot if this was a confirmed registration for a capacity-limited event.
 	if regStatus == models.RegistrationConfirmed {
 		tx.ExecContext(r.Context(), //nolint:errcheck
 			`UPDATE events SET slots_remaining = slots_remaining + 1, updated_at = ?
 			 WHERE id = ? AND capacity IS NOT NULL`,
-			time.Now().UTC(), eventID,
+			now, eventID,
 		)
 	}
 
@@ -768,6 +778,98 @@ func (s *Server) KickRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ReAddRegistration handles POST /api/events/{id}/registrations/{reg_id}/readd  (host only)
+//
+// Allows the host to re-add a student who was previously rejected.
+// The registration is moved back to "confirmed" (if a slot is available)
+// or "conflict_pending" (if the event is at capacity).
+func (s *Server) ReAddRegistration(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("id")
+	regID := r.PathValue("reg_id")
+	hostID := middleware.GetUserID(r.Context())
+
+	// Verify host ownership.
+	var dbHostID string
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT host_id FROM events WHERE id = ?`, eventID,
+	).Scan(&dbHostID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "event not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if dbHostID != hostID {
+		respondError(w, http.StatusForbidden, "you are not the host of this event")
+		return
+	}
+
+	// Ensure the registration exists and is rejected.
+	var regStatus models.RegistrationStatus
+	err = s.DB.QueryRowContext(r.Context(),
+		`SELECT status FROM registrations WHERE id = ? AND event_id = ?`, regID, eventID,
+	).Scan(&regStatus)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "registration not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if regStatus != models.RegistrationRejected {
+		respondError(w, http.StatusConflict, "registration is not rejected")
+		return
+	}
+
+	// Decide new status based on available capacity.
+	var capacity, slotsRemaining sql.NullInt64
+	_ = s.DB.QueryRowContext(r.Context(),
+		`SELECT capacity, slots_remaining FROM events WHERE id = ?`, eventID,
+	).Scan(&capacity, &slotsRemaining)
+
+	newStatus := models.RegistrationConfirmed
+	if capacity.Valid && capacity.Int64 > 0 && slotsRemaining.Valid && slotsRemaining.Int64 <= 0 {
+		newStatus = models.RegistrationConflictPending
+	}
+
+	tx, err := s.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err = tx.ExecContext(r.Context(),
+		`UPDATE registrations SET status = ?, kicked_at = NULL WHERE id = ?`,
+		newStatus, regID,
+	); err != nil {
+		respondError(w, http.StatusInternalServerError, "could not re-add registration")
+		return
+	}
+
+	// Decrement slot if confirmed and event has capacity.
+	if newStatus == models.RegistrationConfirmed && capacity.Valid {
+		tx.ExecContext(r.Context(), //nolint:errcheck
+			`UPDATE events SET slots_remaining = slots_remaining - 1, updated_at = ?
+			 WHERE id = ? AND slots_remaining > 0`,
+			time.Now().UTC(), eventID,
+		)
+	}
+
+	if err := tx.Commit(); err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	respond(w, http.StatusOK, map[string]string{
+		"registration_id": regID,
+		"status":          string(newStatus),
+	})
 }
 
 // fetchEventSkills is an internal helper used by CreateEvent, ListEvents and

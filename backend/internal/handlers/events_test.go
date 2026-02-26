@@ -438,10 +438,86 @@ func TestKickRegistration_Success(t *testing.T) {
 		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var count int
-	srv.DB.QueryRow(`SELECT COUNT(*) FROM registrations WHERE id = ?`, regID).Scan(&count)
-	if count != 0 {
-		t.Errorf("expected registration to be deleted")
+	// Now the registration should be marked as rejected (not deleted).
+	var status string
+	err := srv.DB.QueryRow(`SELECT status FROM registrations WHERE id = ?`, regID).Scan(&status)
+	if err != nil {
+		t.Fatalf("expected registration to still exist: %v", err)
+	}
+	if status != "rejected" {
+		t.Errorf("expected status=rejected, got %q", status)
+	}
+}
+
+func TestKickRegistration_AlreadyRejected(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	regID := uuid.NewString()
+	srv.DB.Exec(`INSERT INTO registrations (id, event_id, student_id, status) VALUES (?, ?, ?, 'rejected')`,
+		regID, eventID, studentID)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/events/"+eventID+"/registrations/"+regID, nil)
+	req.SetPathValue("id", eventID)
+	req.SetPathValue("reg_id", regID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.KickRegistration(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when already rejected, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReAddRegistration_Success(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	regID := uuid.NewString()
+	srv.DB.Exec(`INSERT INTO registrations (id, event_id, student_id, status) VALUES (?, ?, ?, 'rejected')`,
+		regID, eventID, studentID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/events/"+eventID+"/registrations/"+regID+"/readd", nil)
+	req.SetPathValue("id", eventID)
+	req.SetPathValue("reg_id", regID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.ReAddRegistration(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var status string
+	srv.DB.QueryRow(`SELECT status FROM registrations WHERE id = ?`, regID).Scan(&status)
+	if status != "confirmed" {
+		t.Errorf("expected status=confirmed after re-add, got %q", status)
+	}
+}
+
+func TestReAddRegistration_NotRejected(t *testing.T) {
+	srv := newTestServer(t)
+	companyID := seedCompanyUser(t, srv)
+	studentID := seedStudentUser(t, srv)
+	eventID, _ := seedEvent(t, srv, companyID)
+
+	regID := uuid.NewString()
+	srv.DB.Exec(`INSERT INTO registrations (id, event_id, student_id, status) VALUES (?, ?, ?, 'confirmed')`,
+		regID, eventID, studentID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/events/"+eventID+"/registrations/"+regID+"/readd", nil)
+	req.SetPathValue("id", eventID)
+	req.SetPathValue("reg_id", regID)
+	req = ctxWithUser(req, companyID, "company")
+	rec := httptest.NewRecorder()
+	srv.ReAddRegistration(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when not rejected, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

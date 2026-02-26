@@ -294,7 +294,7 @@ func (s *Server) GetMyRegistrations(w http.ResponseWriter, r *http.Request) {
 	studentID := middleware.GetUserID(r.Context())
 
 	rows, err := s.DB.QueryContext(r.Context(),
-		`SELECT r.id, r.event_id, r.student_id, r.registered_at,
+		`SELECT r.id, r.event_id, r.student_id, r.registered_at, r.status,
         e.title, e.start_time, e.end_time, e.status, e.location
  FROM registrations r
  JOIN events e ON e.id = r.event_id
@@ -321,7 +321,7 @@ func (s *Server) GetMyRegistrations(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var reg RegWithEvent
 		if err := rows.Scan(
-			&reg.ID, &reg.EventID, &reg.StudentID, &reg.RegisteredAt,
+			&reg.ID, &reg.EventID, &reg.StudentID, &reg.RegisteredAt, &reg.Status,
 			&reg.EventTitle, &reg.StartTime, &reg.EndTime, &reg.EventStatus, &reg.Location,
 		); err != nil {
 			respondError(w, http.StatusInternalServerError, "scan error")

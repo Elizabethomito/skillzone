@@ -59,7 +59,9 @@ func Open(dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
-// migrate runs each DDL statement in the schema individually.
+// migrate runs each DDL statement in the schema individually, then applies
+// any incremental alter-table migrations that cannot be expressed as
+// CREATE TABLE IF NOT EXISTS statements.
 //
 // LEARNING NOTE — why not one big Exec(schema)?
 // The go-sqlite3 and modernc drivers both execute only the FIRST
@@ -77,6 +79,103 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migration statement failed: %w\nstatement: %s", err, stmt)
 		}
 	}
+
+	// ── Incremental migrations ────────────────────────────────────────────────
+	// These handle schema changes that cannot be applied via CREATE TABLE IF NOT
+	// EXISTS (e.g. adding a new column to an existing table, or widening a CHECK
+	// constraint in SQLite which requires a table rebuild).
+	if err := applyIncrementalMigrations(db); err != nil {
+		return fmt.Errorf("incremental migrations: %w", err)
+	}
+
+	return nil
+}
+
+// applyIncrementalMigrations handles schema changes on existing databases.
+// Each migration is idempotent — it checks whether the change already exists
+// before attempting it so the function is safe to run on every startup.
+func applyIncrementalMigrations(db *sql.DB) error {
+	// ── Migration 1: add kicked_at column to registrations ────────────────
+	// Check whether the column already exists.
+	rows, err := db.Query(`PRAGMA table_info(registrations)`)
+	if err != nil {
+		return fmt.Errorf("PRAGMA table_info: %w", err)
+	}
+	hasKickedAt := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, colType string
+		var dfltValue sql.NullString
+		if scanErr := rows.Scan(&cid, &name, &colType, &notnull, &dfltValue, &pk); scanErr == nil {
+			if name == "kicked_at" {
+				hasKickedAt = true
+				break
+			}
+		}
+	}
+	rows.Close()
+
+	if !hasKickedAt {
+		if _, err := db.Exec(`ALTER TABLE registrations ADD COLUMN kicked_at DATETIME`); err != nil {
+			return fmt.Errorf("add kicked_at column: %w", err)
+		}
+		log.Println("migration: added registrations.kicked_at")
+	}
+
+	// ── Migration 2: widen registrations CHECK constraint to include 'rejected'
+	// SQLite cannot ALTER a CHECK constraint directly — we must recreate the
+	// table.  We detect whether the old constraint is still in place by
+	// attempting an INSERT with the 'rejected' status inside a savepoint,
+	// then rolling back.
+	needsConstraintFix := false
+	_, testErr := db.Exec(`SAVEPOINT _check_rejected_test`)
+	if testErr == nil {
+		_, insertErr := db.Exec(
+			`INSERT OR IGNORE INTO registrations (id, event_id, student_id, registered_at, status)
+			 VALUES ('__test__', '__test__', '__test__', CURRENT_TIMESTAMP, 'rejected')`,
+		)
+		db.Exec(`ROLLBACK TO SAVEPOINT _check_rejected_test`) //nolint:errcheck
+		db.Exec(`RELEASE SAVEPOINT _check_rejected_test`)     //nolint:errcheck
+		if insertErr != nil {
+			needsConstraintFix = true
+		}
+	}
+
+	if needsConstraintFix {
+		log.Println("migration: widening registrations CHECK constraint to include 'rejected'")
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin tx for constraint migration: %w", err)
+		}
+		defer tx.Rollback() //nolint:errcheck
+
+		// Recreate the table with the new constraint.
+		stmts := []string{
+			`CREATE TABLE registrations_new (
+				id            TEXT PRIMARY KEY,
+				event_id      TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+				student_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				status        TEXT NOT NULL DEFAULT 'confirmed'
+				                  CHECK(status IN ('confirmed','conflict_pending','waitlisted','rejected')),
+				kicked_at     DATETIME,
+				UNIQUE (event_id, student_id)
+			)`,
+			`INSERT INTO registrations_new SELECT id, event_id, student_id, registered_at, status, kicked_at FROM registrations`,
+			`DROP TABLE registrations`,
+			`ALTER TABLE registrations_new RENAME TO registrations`,
+		}
+		for _, s := range stmts {
+			if _, err := tx.Exec(s); err != nil {
+				return fmt.Errorf("constraint migration step failed: %w\nstmt: %s", err, s)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit constraint migration: %w", err)
+		}
+		log.Println("migration: registrations table rebuilt with new CHECK constraint")
+	}
+
 	return nil
 }
 
@@ -153,7 +252,8 @@ CREATE TABLE IF NOT EXISTS registrations (
     student_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status        TEXT NOT NULL DEFAULT 'confirmed'
-                      CHECK(status IN ('confirmed','conflict_pending','waitlisted')),
+                      CHECK(status IN ('confirmed','conflict_pending','waitlisted','rejected')),
+    kicked_at     DATETIME,
     UNIQUE (event_id, student_id)
 );
 

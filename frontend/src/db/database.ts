@@ -45,7 +45,7 @@ export interface CachedRegistration {
   event_id: string;
   student_id: string;
   registered_at: string;
-  status: "confirmed" | "conflict_pending" | "waitlisted";
+  status: "confirmed" | "conflict_pending" | "waitlisted" | "rejected";
   /** Denormalised event fields for display without a join. */
   event_title?: string;
   start_time?: string;

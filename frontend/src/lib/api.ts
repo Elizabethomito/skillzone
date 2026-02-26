@@ -191,7 +191,7 @@ export interface Registration {
   event_id: string;
   student_id: string;
   registered_at: string;
-  status: "confirmed" | "conflict_pending" | "waitlisted";
+  status: "confirmed" | "conflict_pending" | "waitlisted" | "rejected";
 }
 
 export interface RegistrationWithEvent extends Registration {
@@ -243,6 +243,15 @@ export async function apiKickRegistration(
   });
 }
 
+export async function apiReAddRegistration(
+  eventId: string,
+  regId: string
+): Promise<{ registration_id: string; status: string }> {
+  return apiFetch(`/api/events/${eventId}/registrations/${regId}/readd`, {
+    method: "POST",
+  });
+}
+
 export async function apiGetMyRegistrations(): Promise<
   RegistrationWithEvent[]
 > {
@@ -278,6 +287,36 @@ export interface UserSkill {
 
 export async function apiGetMySkills(): Promise<UserSkill[]> {
   return apiFetch("/api/users/me/skills");
+}
+
+// ─── Public profile (recruiter-facing) ───────────────────────────────────────
+
+export interface PublicBadge {
+  id: string;
+  skill_id: string;
+  skill_name: string;
+  skill_description: string;
+  event_id: string;
+  event_title: string;
+  event_start: string;
+  event_end: string;
+  event_location: string;
+  host_id: string;
+  host_name: string;
+  host_email: string;
+  awarded_at: string;
+}
+
+export interface PublicProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  badges: PublicBadge[];
+}
+
+export async function apiGetPublicProfile(userId: string): Promise<PublicProfile> {
+  return apiFetch(`/api/users/${userId}/profile`);
 }
 
 // ─── Candidate search (company) ───────────────────────────────────────────────

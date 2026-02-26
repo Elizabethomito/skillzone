@@ -47,6 +47,9 @@ const (
 	RegistrationConfirmed       RegistrationStatus = "confirmed"
 	RegistrationConflictPending RegistrationStatus = "conflict_pending"
 	RegistrationWaitlisted      RegistrationStatus = "waitlisted"
+	// RegistrationRejected is set when the host forcibly removes a student.
+	// The row is kept (not deleted) so the host can re-add them if needed.
+	RegistrationRejected RegistrationStatus = "rejected"
 )
 
 // User represents both student and company accounts.

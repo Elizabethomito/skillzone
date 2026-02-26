@@ -100,6 +100,7 @@ func main() {
 	mux.HandleFunc("GET /api/events", srv.ListEvents)
 	mux.HandleFunc("GET /api/events/{id}", srv.GetEvent)
 	mux.HandleFunc("GET /api/skills", srv.ListSkills)
+	mux.HandleFunc("GET /api/users/{id}/profile", srv.GetUserPublicProfile)
 	// Demo seed — loads all fixture data; safe to call multiple times (idempotent).
 	// Remove or gate behind an env flag before any real deployment.
 	mux.HandleFunc("POST /api/admin/seed", srv.SeedDemo)
@@ -134,6 +135,8 @@ func main() {
 		auth(onlyCompany(http.HandlerFunc(srv.ResolveRegistrationConflict))))
 	mux.Handle("DELETE /api/events/{id}/registrations/{reg_id}",
 		auth(onlyCompany(http.HandlerFunc(srv.KickRegistration))))
+	mux.Handle("POST /api/events/{id}/registrations/{reg_id}/readd",
+		auth(onlyCompany(http.HandlerFunc(srv.ReAddRegistration))))
 	mux.Handle("POST /api/skills",
 		auth(onlyCompany(http.HandlerFunc(srv.CreateSkill))))
 	mux.Handle("GET /api/users/students",

@@ -23,7 +23,7 @@ import {
   apiListEvents, apiCreateEvent, apiUpdateEvent, apiUpdateEventStatus,
   apiGetCheckinCode, apiRegisterForEvent, apiUnregisterFromEvent,
   apiGetEventRegistrations, apiListSkills, apiResolveConflict, apiKickRegistration,
-  apiGetMyRegistrations,
+  apiReAddRegistration, apiGetMyRegistrations,
   type ApiEvent, type Skill, type RegistrationWithStudent,
 } from "../lib/api";
 import {
@@ -305,8 +305,10 @@ function QRScannerModal({ userId, onClose }: { userId: string; onClose: () => vo
 function ManageGuestsModal({ event, onClose }: { event: ApiEvent; onClose: () => void }) {
   const [regs, setRegs] = useState<RegistrationWithStudent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"guests" | "rejected">("guests");
 
   const load = useCallback(() => {
+    setLoading(true);
     apiGetEventRegistrations(event.id)
       .then(setRegs)
       .catch(() => toast.error("Could not load registrations"))
@@ -326,7 +328,7 @@ function ManageGuestsModal({ event, onClose }: { event: ApiEvent; onClose: () =>
   };
 
   const kick = async (regId: string, name: string) => {
-    if (!confirm(`Remove ${name} from this event?`)) return;
+    if (!confirm(`Remove ${name} from this event? They will be moved to the rejected list.`)) return;
     try {
       await apiKickRegistration(event.id, regId);
       toast.success(`${name} removed`);
@@ -336,15 +338,30 @@ function ManageGuestsModal({ event, onClose }: { event: ApiEvent; onClose: () =>
     }
   };
 
+  const readd = async (regId: string, name: string) => {
+    try {
+      await apiReAddRegistration(event.id, regId);
+      toast.success(`${name} re-added to the guest list`);
+      load();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    }
+  };
+
+  const activeRegs   = regs.filter((r) => r.status !== "rejected");
+  const rejectedRegs = regs.filter((r) => r.status === "rejected");
+
   const statusColor: Record<string, string> = {
     confirmed:        "bg-green-100 text-green-700",
     conflict_pending: "bg-amber-100 text-amber-700",
     waitlisted:       "bg-blue-100 text-blue-700",
+    rejected:         "bg-red-100 text-red-600",
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-background p-6 shadow-xl">
+        {/* Header */}
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold">Manage Guests</h2>
@@ -352,45 +369,106 @@ function ManageGuestsModal({ event, onClose }: { event: ApiEvent; onClose: () =>
           </div>
           <button onClick={onClose} className="rounded p-1 hover:bg-muted"><X className="h-5 w-5" /></button>
         </div>
+
+        {/* Tabs */}
+        <div className="mb-4 flex gap-1 rounded-lg bg-muted p-1">
+          <button
+            onClick={() => setTab("guests")}
+            className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+              tab === "guests" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Guests
+            {activeRegs.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-primary">
+                {activeRegs.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setTab("rejected")}
+            className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+              tab === "rejected" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Rejected
+            {rejectedRegs.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                {rejectedRegs.length}
+              </span>
+            )}
+          </button>
+        </div>
+
         {loading ? (
           <div className="flex justify-center py-8">
             <div className="h-6 w-6 animate-spin rounded-full border-4 border-primary border-t-transparent" />
           </div>
-        ) : regs.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">No registrations yet.</p>
+        ) : tab === "guests" ? (
+          activeRegs.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No registrations yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {activeRegs.map((reg) => (
+                <div key={reg.id}
+                  className="flex items-center justify-between rounded-xl border border-border bg-card p-4">
+                  <div>
+                    <p className="font-medium text-foreground">{reg.student_name}</p>
+                    <p className="text-xs text-muted-foreground">{reg.student_email}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColor[reg.status] ?? ""}`}>
+                      {reg.status.replace("_", " ")}
+                    </span>
+                    {reg.status === "conflict_pending" && (
+                      <>
+                        <button onClick={() => resolve(reg.id, "confirm")}
+                          className="rounded-lg bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700">
+                          <Check className="h-3 w-3" />
+                        </button>
+                        <button onClick={() => resolve(reg.id, "waitlist")}
+                          className="rounded-lg bg-blue-500 px-2 py-1 text-xs text-white hover:bg-blue-600">
+                          Waitlist
+                        </button>
+                      </>
+                    )}
+                    <button onClick={() => kick(reg.id, reg.student_name)}
+                      title="Remove from guest list"
+                      className="rounded-lg p-1.5 text-destructive hover:bg-destructive/10">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
         ) : (
-          <div className="space-y-2">
-            {regs.map((reg) => (
-              <div key={reg.id}
-                className="flex items-center justify-between rounded-xl border border-border bg-card p-4">
-                <div>
-                  <p className="font-medium text-foreground">{reg.student_name}</p>
-                  <p className="text-xs text-muted-foreground">{reg.student_email}</p>
+          rejectedRegs.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No rejected registrations.</p>
+          ) : (
+            <div className="space-y-2">
+              {rejectedRegs.map((reg) => (
+                <div key={reg.id}
+                  className="flex items-center justify-between rounded-xl border border-destructive/20 bg-destructive/5 p-4">
+                  <div>
+                    <p className="font-medium text-foreground">{reg.student_name}</p>
+                    <p className="text-xs text-muted-foreground">{reg.student_email}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColor["rejected"]}`}>
+                      rejected
+                    </span>
+                    <button
+                      onClick={() => readd(reg.id, reg.student_name)}
+                      title="Re-add to guest list"
+                      className="flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+                      <Check className="h-3 w-3" /> Re-add
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColor[reg.status] ?? ""}`}>
-                    {reg.status.replace("_", " ")}
-                  </span>
-                  {reg.status === "conflict_pending" && (
-                    <>
-                      <button onClick={() => resolve(reg.id, "confirm")}
-                        className="rounded-lg bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700">
-                        <Check className="h-3 w-3" />
-                      </button>
-                      <button onClick={() => resolve(reg.id, "waitlist")}
-                        className="rounded-lg bg-blue-500 px-2 py-1 text-xs text-white hover:bg-blue-600">
-                        Waitlist
-                      </button>
-                    </>
-                  )}
-                  <button onClick={() => kick(reg.id, reg.student_name)}
-                    className="rounded-lg p-1.5 text-destructive hover:bg-destructive/10">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
         )}
       </div>
     </div>
@@ -404,12 +482,14 @@ interface EventCardProps {
   isHost: boolean;
   isStudent: boolean;
   myRegistrationStatus?: string;
+  /** True when the student has a PENDING offline queue entry for this event. */
+  hasPendingQueue?: boolean;
   onRefresh: () => void;
   userId: string;
   online: boolean;
 }
 
-function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, userId, online }: EventCardProps) {
+function EventCard({ event, isHost, isStudent, myRegistrationStatus, hasPendingQueue, onRefresh, userId, online }: EventCardProps) {
   const [showQR, setShowQR]             = useState(false);
   const [showScanner, setShowScanner]   = useState(false);
   const [showGuests, setShowGuests]     = useState(false);
@@ -417,7 +497,11 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
   const [skills, setSkills]             = useState<Skill[]>([]);
   const [busy, setBusy]                 = useState(false);
 
-  const isRegistered = !!myRegistrationStatus;
+  // A registration is "active" (blocking re-register) unless it's rejected.
+  const isRegistered = !!myRegistrationStatus && myRegistrationStatus !== "rejected";
+  const isRejected   = myRegistrationStatus === "rejected";
+  // Show pending if we have an offline queue entry but no server status yet.
+  const isPendingOffline = hasPendingQueue && !myRegistrationStatus;
 
   const changeStatus = async (status: "upcoming" | "active" | "completed") => {
     setBusy(true);
@@ -556,7 +640,17 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
         {/* Student actions */}
         {isStudent && event.status !== "completed" && (
           <>
-            {!isRegistered ? (
+            {/* Rejected — show notice, no unregister button */}
+            {isRejected ? (
+              <span className="flex items-center gap-1 rounded-full bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive">
+                <AlertTriangle className="h-3 w-3" /> Removed by host
+              </span>
+            ) : isPendingOffline ? (
+              /* Offline-queued but not yet synced to server */
+              <span className="flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-700">
+                <WifiOff className="h-3 w-3" /> Pending sync…
+              </span>
+            ) : !isRegistered ? (
               <button onClick={handleRegister} disabled={busy}
                 className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
                 {online ? <ChevronRight className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
@@ -568,7 +662,7 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
                 Unregister
               </button>
             )}
-            {event.status === "active" && (
+            {event.status === "active" && !isRejected && (
               <button onClick={() => setShowScanner(true)}
                 className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700">
                 <Scan className="h-3 w-3" /> Scan QR
@@ -577,11 +671,24 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, 
           </>
         )}
 
-        {isRegistered && (
-          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-            ✓ {myRegistrationStatus}
-          </span>
-        )}
+        {/* Registration status badge */}
+        {isStudent && (() => {
+          if (isPendingOffline) return null; // already shown above
+          if (!myRegistrationStatus) return null;
+          const cfg: Record<string, { cls: string; label: string }> = {
+            confirmed:        { cls: "bg-green-100 text-green-700",   label: "✓ confirmed" },
+            conflict_pending: { cls: "bg-amber-100 text-amber-700",   label: "⏳ pending review" },
+            waitlisted:       { cls: "bg-blue-100 text-blue-700",     label: "📋 waitlisted" },
+            rejected:         { cls: "bg-red-100 text-red-600",       label: "✕ rejected" },
+          };
+          const c = cfg[myRegistrationStatus];
+          if (!c) return null;
+          return (
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${c.cls}`}>
+              {c.label}
+            </span>
+          );
+        })()}
       </div>
 
       {/* Sub-modals */}
@@ -656,9 +763,27 @@ export default function Events() {
     placeholderData: [],
   });
 
-  // Map event_id → status for quick lookup
+  // Map event_id → server-side registration status for quick lookup
   const myRegs: Record<string, string> = {};
   myRegsRaw.forEach((r) => { myRegs[r.event_id] = r.status; });
+
+  // ── Pending offline queue (students only) ─────────────────────────────────
+  // Shows "pending sync" on the card when a REGISTER action is queued locally
+  // but hasn't been confirmed by the server yet.
+  const { data: pendingQueueEventIds = new Set<string>() } = useQuery({
+    queryKey: ["pending-queue", user?.id],
+    enabled: isStudent && !!user?.id,
+    staleTime: 5_000,
+    queryFn: async () => {
+      const rows = await db.sync_queue
+        .where("[user_id+status]")
+        .equals([user!.id, "PENDING"])
+        .filter((r) => r.action === "REGISTER")
+        .toArray();
+      return new Set(rows.map((r) => r.event_id));
+    },
+    placeholderData: new Set<string>(),
+  });
 
   const loading = eventsLoading;
 
@@ -666,6 +791,7 @@ export default function Events() {
   const loadEvents = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["events"] });
     queryClient.invalidateQueries({ queryKey: ["my-registrations"] });
+    queryClient.invalidateQueries({ queryKey: ["pending-queue"] });
   }, [queryClient]);
 
   // Seed events from Dexie if query hasn't returned yet and we're offline
@@ -771,6 +897,7 @@ export default function Events() {
                 isHost={isCompany && event.host_id === user?.id}
                 isStudent={isStudent}
                 myRegistrationStatus={myRegs[event.id]}
+                hasPendingQueue={pendingQueueEventIds.has(event.id)}
                 onRefresh={loadEvents}
                 userId={user?.id ?? ""}
                 online={online}
