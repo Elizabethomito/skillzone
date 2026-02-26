@@ -10,14 +10,17 @@
 // Otherwise derive the backend URL from the page's own origin so that
 // external devices on the same LAN automatically hit the right host
 // without needing VITE_API_URL to be set.
-const BASE: string = (() => {
-  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL as string;
-  // In dev the frontend runs on :5173 and the backend on :8080 — same host.
-  // In production the backend serves the built frontend, so same origin.
-  const { protocol, hostname } = window.location;
-  const backendPort = import.meta.env.VITE_BACKEND_PORT ?? "8080";
-  return `${protocol}//${hostname}:${backendPort}`;
-})();
+// const BASE: string = (() => {
+//   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL as string;
+//   // In dev the frontend runs on :5173 and the backend on :8080 — same host.
+//   // In production the backend serves the built frontend, so same origin.
+//   const { protocol, hostname } = window.location;
+//   const backendPort = import.meta.env.VITE_BACKEND_PORT ?? "8080";
+//   return `${protocol}//${hostname}:${backendPort}`;
+// })();
+// If VITE_API_URL is set (e.g. in Production), use it. 
+// Otherwise, default to an empty string to use relative paths so the Vite proxy catches it.
+const BASE: string = import.meta.env.VITE_API_URL || "";
 
 // ─── Token storage ────────────────────────────────────────────────────────────
 

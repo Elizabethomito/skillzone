@@ -216,33 +216,43 @@ function CheckInQRModal({ event, onClose }: { event: ApiEvent; onClose: () => vo
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [expiresIn, setExpiresIn] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [jwtToken, setJwtToken] = useState<string | null>(null); // Add state for the token
 
+  // 1. Fetch the secure token from the Go backend
   useEffect(() => {
     apiGetCheckinCode(event.id)
-      .then(async (res) => {
+      .then((res) => {
         setExpiresIn(res.expires_in_seconds);
-        const payload = JSON.stringify({ token: res.token });
-        if (canvasRef.current) {
-          await QRCode.toCanvas(canvasRef.current, payload, {
-            width: 280,
-            margin: 2,
-            color: { dark: "#000000", light: "#ffffff" },
-          });
-        }
+        setJwtToken(res.token); // Save it to state instead of drawing immediately
       })
       .catch(() => toast.error("Could not generate check-in QR code"))
       .finally(() => setLoading(false));
   }, [event.id]);
 
+  // 2. Draw the QR code ONLY after the canvas has mounted
+  useEffect(() => {
+    // If we are no longer loading, we have a token, and the canvas is on screen:
+    if (!loading && jwtToken && canvasRef.current) {
+      const payload = JSON.stringify({ token: jwtToken });
+      
+      QRCode.toCanvas(canvasRef.current, payload, {
+        width: 280,
+        margin: 2,
+        color: { dark: "#000000", light: "#ffffff" },
+      }).catch(() => toast.error("Failed to draw QR code"));
+    }
+  }, [loading, jwtToken]); // Re-run this effect when loading or token changes
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-background p-6 shadow-xl text-center">
+      <div className="w-full max-w-sm rounded-2xl bg-background p-6 text-center shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold">Check-in QR Code</h2>
           <button onClick={onClose} className="rounded p-1 hover:bg-muted"><X className="h-5 w-5" /></button>
         </div>
-        <p className="mb-1 text-sm font-medium text-foreground truncate">{event.title}</p>
+        <p className="mb-1 truncate text-sm font-medium text-foreground">{event.title}</p>
         <p className="mb-4 text-xs text-muted-foreground">Students scan to record attendance</p>
+        
         {loading ? (
           <div className="flex h-[280px] items-center justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
@@ -250,20 +260,20 @@ function CheckInQRModal({ event, onClose }: { event: ApiEvent; onClose: () => vo
         ) : (
           <canvas ref={canvasRef} className="mx-auto rounded-xl border border-border shadow-sm" />
         )}
+        
         {expiresIn > 0 && (
           <p className="mt-3 text-xs text-muted-foreground">
             <Clock className="mr-1 inline h-3 w-3" />
             Valid for {Math.floor(expiresIn / 3600)} hour{Math.floor(expiresIn / 3600) !== 1 ? "s" : ""} — display on projector
           </p>
         )}
-        <p className="mt-2 text-xs text-green-600 font-medium">
+        <p className="mt-2 text-xs font-medium text-green-600">
           Students scan while offline — badges sync later ✓
         </p>
       </div>
     </div>
   );
 }
-
 // ─── QR Scanner (Student) ─────────────────────────────────────────────────────
 // Handles two QR payload types:
 //   { type: "register", eventId }  → enqueue a registration
