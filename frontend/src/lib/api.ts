@@ -6,7 +6,18 @@
  * network request and, if it fails, queue the action in Dexie for later sync.
  */
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
+// If an explicit override is set (e.g. for production), use it.
+// Otherwise derive the backend URL from the page's own origin so that
+// external devices on the same LAN automatically hit the right host
+// without needing VITE_API_URL to be set.
+const BASE: string = (() => {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL as string;
+  // In dev the frontend runs on :5173 and the backend on :8080 — same host.
+  // In production the backend serves the built frontend, so same origin.
+  const { protocol, hostname } = window.location;
+  const backendPort = import.meta.env.VITE_BACKEND_PORT ?? "8080";
+  return `${protocol}//${hostname}:${backendPort}`;
+})();
 
 // ─── Token storage ────────────────────────────────────────────────────────────
 

@@ -91,10 +91,12 @@ ADDR=0.0.0.0:8080 JWT_SECRET=hackathon-demo ./skillzone
 
 ```bash
 cd /home/akihara/hackathons/skillzone/frontend
-VITE_API_URL=http://<SERVER_IP>:8080 npm run dev -- --host
+npm run dev -- --host
 ```
 
 The `--host` flag makes Vite listen on `0.0.0.0:5173` (not just localhost).
+No environment variable needed — the app detects the server's IP from the
+browser's own address bar at runtime, so it works on every device automatically.
 
 **Helper A and Helper B** open this URL on their devices:
 ```

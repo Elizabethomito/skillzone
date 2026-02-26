@@ -48,9 +48,13 @@ ADDR=0.0.0.0:8080 JWT_SECRET=hackathon-demo go run ./cmd/server
 
 ```bash
 cd frontend
-VITE_API_URL=http://<SERVER_IP>:8080 npm run dev -- --host
+npm run dev -- --host
 # → http://<SERVER_IP>:5173  (accessible from all devices on the network)
 ```
+
+No `VITE_API_URL` needed — the app derives the backend address from the
+browser's own hostname at runtime (`window.location.hostname + :8080`), so
+every device that opens the page automatically talks to the right server.
 
 **Helper A and Helper B** open `http://<SERVER_IP>:5173` on their devices.
 The sign-in page has **click-to-fill buttons** — helpers tap their name,

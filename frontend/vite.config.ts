@@ -8,7 +8,7 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 5173,
     hmr: {
       overlay: false,
       host: "localhost",
@@ -43,7 +43,8 @@ export default defineConfig(({ mode }) => ({
         // Network-first for API calls — falls back to cache when offline
         runtimeCaching: [
           {
-            urlPattern: /^https?:\/\/.*\/api\/.*/i,
+            // Match /api/* regardless of host — works for localhost AND LAN IPs
+            urlPattern: /\/api\//,
             handler: "NetworkFirst",
             options: {
               cacheName: "api-cache",
