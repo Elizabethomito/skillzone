@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Elizabethomito/skillzone/backend/internal/auth"
+	"github.com/Elizabethomito/skillzone/backend/internal/middleware"
 	"github.com/Elizabethomito/skillzone/backend/internal/models"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -146,7 +147,11 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 // The Authenticate middleware has already validated the token and placed
 // the user_id in the context, so we just need to look up the full record.
 func (s *Server) Me(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("user_id").(string)
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		respondError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
 
 	var user models.User
 	err := s.DB.QueryRowContext(r.Context(),
