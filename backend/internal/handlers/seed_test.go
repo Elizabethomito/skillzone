@@ -54,8 +54,10 @@ func TestSeedDemo_ResponseShape(t *testing.T) {
 	if out["seeded"] != true {
 		t.Errorf("expected seeded=true, got %v", out["seeded"])
 	}
-	for _, key := range []string{"accounts", "companies", "active_workshop",
-		"active_agri_workshop", "active_med_workshop", "internship"} {
+	for _, key := range []string{
+		"accounts", "companies", "active_workshop",
+		"active_agri_workshop", "active_med_workshop", "internship",
+	} {
 		if out[key] == nil {
 			t.Errorf("response missing key %q", key)
 		}
@@ -172,17 +174,17 @@ func TestSeedDemo_SkillDomainCoverage(t *testing.T) {
 
 	// Spot-check one badge from each domain.
 	for _, name := range []string{
-		"Python Programming",           // Technology: Programming
-		"Data Science",                 // Technology: Data & ML
-		"AI Application Development",  // Technology: AI
-		"Cloud Computing",              // Technology: Infrastructure
-		"Mobile Development",           // Technology: Frontend & Mobile
-		"Soil Science & Health",        // Agriculture
-		"Climate-Smart Farming",        // Agriculture
-		"Health Data Management",       // Healthcare
-		"Public Health & Epidemiology", // Healthcare
-		"Entrepreneurship & Innovation",// Business
-		"Project Management",           // Business
+		"Python Programming",            // Technology: Programming
+		"Data Science",                  // Technology: Data & ML
+		"AI Application Development",    // Technology: AI
+		"Cloud Computing",               // Technology: Infrastructure
+		"Mobile Development",            // Technology: Frontend & Mobile
+		"Soil Science & Health",         // Agriculture
+		"Climate-Smart Farming",         // Agriculture
+		"Health Data Management",        // Healthcare
+		"Public Health & Epidemiology",  // Healthcare
+		"Entrepreneurship & Innovation", // Business
+		"Project Management",            // Business
 	} {
 		n := dbInt(t, srv, `SELECT COUNT(*) FROM skills WHERE name=?`, name)
 		if n != 1 {
