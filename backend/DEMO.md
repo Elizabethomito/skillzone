@@ -7,18 +7,33 @@ Use this guide to run the full end-to-end demo on a local Wi-Fi network
 
 ## Cast of characters
 
-| Person | Role | Email | Password |
-|--------|------|-------|----------|
-| **TechCorp Africa** | Event host (company) | `host@techcorp.test` | `demo1234` |
-| **Amara Osei** | Veteran student | `amara@student.test` | `demo1234` |
-| **Baraka Mwangi** | Newcomer student | `baraka@student.test` | `demo1234` |
+### Loginable accounts (all password `demo1234`)
+
+| Person | Role | Email |
+|--------|------|-------|
+| **TechCorp Africa** | Event host (company) | `host@techcorp.test` |
+| **Amara Osei** | Veteran student | `amara@student.test` |
+| **Baraka Mwangi** | Newcomer student | `baraka@student.test` |
+
+### Background companies (filler data only, no login needed)
+
+| Company | Domain |
+|---------|--------|
+| **GreenLeaf Agri** | Agriculture & Sustainability |
+| **MedConnect Health** | Healthcare & Life Sciences |
 
 **Amara** has been on the platform for months: 6 completed events, 6 skill
-badges (Python, Data Science, Open Source, Cloud, Mobile Dev, Cybersecurity),
-and is already registered for today's workshop.
+badges (Python, Data Science, Open Source, Cloud Computing, Mobile Development,
+Cybersecurity Fundamentals), and is already registered for today's AI workshop.
 
 **Baraka** just signed up. No history, no pre-registration — they arrived at
 the venue and will scan the QR like everyone else.
+
+**15 filler students** are pre-seeded across all three companies to populate
+the Candidates search and give realistic badge/attendance counts:
+- **TechCorp** (8): Chidi, Fatima, Kwame, Aisha, Tobi, Ngozi, Joel, Lila
+- **GreenLeaf** (4): Zara, Emeka, Sade, Kofi
+- **MedConnect** (3): Muna, Dayo, Nia
 
 ---
 
@@ -67,35 +82,54 @@ Other devices open: `http://<YOUR_LAPTOP_IP>:5173`
 curl -s -X POST http://localhost:8080/api/admin/seed | jq .
 ```
 
-This creates the three accounts, 9 skill badges, 8 events (6 past/completed,
-1 active workshop, 1 upcoming internship), Amara's full attendance history,
-her skill badges, and her pre-registration for today's workshop.
+This creates **20 users** (3 companies, 2 demo students, 15 filler students),
+**37 skill badges** across 5 domains, **18 events** (3 past + 1 active + 1 upcoming
+per company), all attendance histories, and Amara's pre-registration for today's
+AI workshop.
 
 **Safe to call multiple times** — every INSERT uses `OR IGNORE` so re-seeding
 a running server is harmless.
 
-The response includes the event IDs you'll need below:
+The response includes all three active workshop IDs and the TechCorp internship:
 
 ```json
 {
+  "seeded": true,
+  "accounts": [...],
+  "companies": [
+    {"id": "...", "name": "TechCorp Africa",    "domain": "Technology"},
+    {"id": "...", "name": "GreenLeaf Agri",     "domain": "Agriculture & Sustainability"},
+    {"id": "...", "name": "MedConnect Health",  "domain": "Healthcare & Life Sciences"}
+  ],
   "active_workshop": {
-    "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
-    "title": "Building Apps with AI Workshop"
+    "event_id": "seed-event-aiwork-0000-0000-0000-000000000506",
+    "title": "Building Apps with AI Workshop",
+    "host": "TechCorp Africa"
+  },
+  "active_agri_workshop": {
+    "event_id": "seed-event-agrwrk-0000-0000-0000-000000000513",
+    "title": "Agro-processing & Market Linkages Workshop",
+    "host": "GreenLeaf Agri"
+  },
+  "active_med_workshop": {
+    "event_id": "seed-event-medwrk-0000-0000-0000-000000000523",
+    "title": "AI in Healthcare: From Data to Diagnosis",
+    "host": "MedConnect Health"
   },
   "internship": {
-    "event_id": "seed-event-intern-0000-0000-0000-000000000031",
+    "event_id": "seed-event-intern-0000-0000-0000-000000000507",
     "title": "AI Product Internship",
     "slots_remaining": 1
   }
 }
 ```
 
-Save the IDs in environment variables for the curl snippets below:
+Save the TechCorp IDs in environment variables for the curl snippets below:
 
 ```bash
 BASE=http://localhost:8080
-WORKSHOP_ID=seed-event-aiwork-0000-0000-0000-000000000030
-INTERN_ID=seed-event-intern-0000-0000-0000-000000000031
+WORKSHOP_ID=seed-event-aiwork-0000-0000-0000-000000000506
+INTERN_ID=seed-event-intern-0000-0000-0000-000000000507
 
 COMPANY_TOKEN=$(curl -s -X POST $BASE/api/auth/login \
   -H "Content-Type: application/json" \
@@ -125,6 +159,8 @@ curl -s $BASE/api/users/me/skills \
 curl -s $BASE/api/users/me/registrations \
   -H "Authorization: Bearer $AMARA_TOKEN" | jq '[.[] | {title: .event_title, status: .event_status}]'
 ```
+
+Expected badges: `["Python","Data Science","Open Source","Cloud Computing","Mobile Development","Cybersecurity Fundamentals"]`
 
 ### Scene 2 — Workshop is live: host activates it
 
@@ -238,11 +274,11 @@ curl -s -X POST $BASE/api/events/$INTERN_ID/register \
 ### Scene 8 — Badges awarded automatically
 
 ```bash
-# Amara now has 8 badges (6 old + AI Application Development + Prompt Engineering)
+# Amara now has 8 badges (6 history + AI Application Development + Prompt Engineering)
 curl -s $BASE/api/users/me/skills \
   -H "Authorization: Bearer $AMARA_TOKEN" | jq '[.[] | .skill.name]'
 
-# Baraka has her first badge
+# Baraka has her first badge (AI Application Development)
 curl -s $BASE/api/users/me/skills \
   -H "Authorization: Bearer $BARAKA_TOKEN" | jq '[.[] | .skill.name]'
 ```
@@ -281,7 +317,42 @@ curl -s -X PATCH $BASE/api/events/$INTERN_ID/registrations/$BARAKA_REG_ID \
 # -d '{"action":"waitlist"}'
 ```
 
-### Scene 11 — End the workshop early (EOD)
+### Scene 11 — Cross-domain candidate search
+
+With 3 companies and 37 skill badges across 5 domains, judges can see the
+platform used for real hiring.
+
+```bash
+# All students with at least one badge (≥17 results)
+curl -s "$BASE/api/users/students" \
+  -H "Authorization: Bearer $COMPANY_TOKEN" | jq 'length'
+
+# Students with Python (TechCorp filler + Amara = ≥4)
+PYTHON_ID=seed-skill-python--0000-0000-0000-000000000100
+curl -s "$BASE/api/users/students?skill_id=$PYTHON_ID" \
+  -H "Authorization: Bearer $COMPANY_TOKEN" | jq '[.[] | .name]'
+
+# Students with Soil Science & Health (GreenLeaf filler = ≥2)
+SOIL_ID=seed-skill-soilsci-0000-0000-0000-000000000201
+curl -s "$BASE/api/users/students?skill_id=$SOIL_ID" \
+  -H "Authorization: Bearer $COMPANY_TOKEN" | jq '[.[] | .name]'
+
+# Students with AI in Healthcare (MedConnect filler = ≥2)
+HCAI_ID=seed-skill-hcai---0000-0000-0000-000000000304
+curl -s "$BASE/api/users/students?skill_id=$HCAI_ID" \
+  -H "Authorization: Bearer $COMPANY_TOKEN" | jq '[.[] | .name]'
+
+# AND filter — students with BOTH Python AND AI Application Development
+AIDEV_ID=seed-skill-aidev--0000-0000-0000-000000000120
+curl -s "$BASE/api/users/students?skill_id=$PYTHON_ID&skill_id=$AIDEV_ID" \
+  -H "Authorization: Bearer $COMPANY_TOKEN" | jq '[.[] | .name]'
+```
+
+> **What to say:** "The same API powers all three companies. A health-tech
+> recruiter finds nurses who know FHIR. An agri-startup finds farmers with
+> precision-ag certifications. Badges are earned by showing up — not self-reported."
+
+### Scene 12 — End the workshop early (EOD)
 
 ```bash
 curl -s -X PATCH $BASE/api/events/$WORKSHOP_ID/status \

@@ -99,7 +99,12 @@ func (s *Server) SearchStudents(w http.ResponseWriter, r *http.Request) {
 		Skills []models.UserSkill `json:"skills"`
 	}
 
-	var rows interface{ Next() bool; Scan(...interface{}) error; Close() error; Err() error }
+	var rows interface {
+		Next() bool
+		Scan(...interface{}) error
+		Close() error
+		Err() error
+	}
 	var err error
 
 	if len(skillIDs) == 0 {

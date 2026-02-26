@@ -33,17 +33,28 @@ npm run dev
 curl -X POST http://localhost:8080/api/admin/seed
 ```
 
-Expected response:
+Expected response (abbreviated):
 
 ```json
 {
   "seeded": true,
   "active_workshop": {
-    "event_id": "seed-event-aiwork-0000-0000-0000-000000000030",
-    "title": "Building Apps with AI Workshop"
+    "event_id": "seed-event-aiwork-0000-0000-0000-000000000506",
+    "title": "Building Apps with AI Workshop",
+    "host": "TechCorp Africa"
+  },
+  "active_agri_workshop": {
+    "event_id": "seed-event-agrwrk-0000-0000-0000-000000000513",
+    "title": "Agro-processing & Market Linkages Workshop",
+    "host": "GreenLeaf Agri"
+  },
+  "active_med_workshop": {
+    "event_id": "seed-event-medwrk-0000-0000-0000-000000000523",
+    "title": "AI in Healthcare: From Data to Diagnosis",
+    "host": "MedConnect Health"
   },
   "internship": {
-    "event_id": "seed-event-intern-0000-0000-0000-000000000031",
+    "event_id": "seed-event-intern-0000-0000-0000-000000000507",
     "title": "AI Product Internship",
     "slots_remaining": 1
   }
@@ -55,8 +66,13 @@ Expected response:
 | Account | Email | Role |
 |---------|-------|------|
 | TechCorp Africa | `host@techcorp.test` | Company (host) |
-| Amara Osei | `amara@student.test` | Student (pre-registered + history) |
+| Amara Osei | `amara@student.test` | Student (pre-registered + 6 skill history) |
 | Baraka Mwangi | `baraka@student.test` | Student (fresh account) |
+
+**Filler students (15 total, not loginable):**
+TechCorp: Chidi, Fatima, Kwame, Aisha, Tobi, Ngozi, Joel, Lila ·
+GreenLeaf: Zara, Emeka, Sade, Kofi ·
+MedConnect: Muna, Dayo, Nia
 
 ---
 
@@ -92,8 +108,11 @@ Expected response:
 ### Act 3 — Events Page (Host View)
 
 1. Click **Events** in the navigation.
-2. Show the full event list — 6 completed past events, 1 active workshop, 1 upcoming internship.
-3. Highlight the **AI Workshop** card (status badge: `active`).
+2. Show the full event list — 18 events across 3 companies:
+   - **TechCorp Africa**: 6 completed, 1 active (AI Workshop), 1 upcoming (AI Product Internship)
+   - **GreenLeaf Agri**: 3 completed, 1 active (Agro-processing Workshop), 1 upcoming (Sustainable Agriculture Internship)
+   - **MedConnect Health**: 3 completed, 1 active (AI in Healthcare), 1 upcoming (Digital Health Innovation Fellowship)
+3. As the TechCorp host, only TechCorp's events show host controls. Highlight the **Building Apps with AI Workshop** card (status badge: `active`).
 
 **Host controls on the AI Workshop card:**
 
@@ -180,8 +199,7 @@ Leave this modal open on the host's screen (or a second monitor).
 ### Act 7 — The Slot Conflict (Internship Registration)
 
 > This demo requires **two student sessions** and the AI Product Internship
-> (capacity: 2, currently 1 slot remaining → 1 slot left after Amara's earlier
-> confirmed registration).
+> (capacity: 2, 1 slot already confirmed for Amara → 1 slot remaining).
 
 #### 7a — Both students register offline simultaneously
 
@@ -221,32 +239,42 @@ Leave this modal open on the host's screen (or a second monitor).
 ### Act 8 — Skills Catalogue
 
 1. Click **Skills** in the navigation.
-2. Show the grid of 9 skill badges.
-3. Type "AI" in the search bar — the grid filters live to 3 results.
-4. As the company account, each skill card shows **"Find candidates →"** link.
+2. Show the grid of **37 skill badges** across 5 domains:
+   - **Tech — Programming** (6): Python, JavaScript, TypeScript, Go, Rust, SQL
+   - **Tech — Data & AI** (8): Data Science, MLOps, Data Engineering, AI Application Development, Prompt Engineering, AI Product Management, Computer Vision, NLP
+   - **Tech — Infrastructure** (5): Cloud Computing, DevOps, Docker & Containers, Cybersecurity Fundamentals, Open Source
+   - **Tech — Frontend** (4): Mobile Development, React & Web Apps, UI/UX Design, API Design
+   - **Agriculture** (6): Precision Agriculture, Soil Science & Health, Climate-Smart Farming, Agro-processing, Food Safety, Water Management
+   - **Healthcare** (5): Health Data Management, Public Health & Epidemiology, Medical Technology, Clinical Research, AI in Healthcare
+   - **Business** (3): Entrepreneurship & Innovation, Project Management, System Design
+3. Type "AI" in the search bar — the grid live-filters to 5 results.
+4. Type "Health" — filters to 3 healthcare badges.
+5. As the company account, each skill card shows **"Find candidates →"** link.
 
 ---
 
 ### Act 9 — Candidate Search (Company Feature)
 
 1. While signed in as `host@techcorp.test`, click **Candidates** in the nav.
-2. The page loads all students with at least one badge.
+2. The page loads **≥17 students** with at least one verified badge.
 3. Click the skill picker, type "AI Application" and select it.
-4. The results narrow to students who hold that badge.
+4. The results narrow to students who hold that badge (Amara + several TechCorp filler students).
 5. Add a second filter: "Prompt Engineering" — results show students with BOTH badges.
-6. Hover over Amara's card — it shows her full badge list.
+6. Clear filters, type "Soil Science" — shows GreenLeaf filler students.
+7. Type "AI in Healthcare" — shows MedConnect filler students.
+8. Hover over Amara's card — it shows her full badge list.
 
-> **What to say:** "Companies can instantly find students with any combination
-> of verified skills — no resumes, no guesswork. Every badge is backed by a
-> real attendance record on our server."
+> **What to say:** "The search works across all three companies and all 37 skill
+> domains — tech, agriculture, and healthcare. Every badge is backed by a real
+> attendance record. No self-reported skills, no resumes."
 
 ---
 
 ### Act 10 — Profile Page
 
 1. Click **Profile** in the nav (as Amara).
-2. Show the stat cards: badge count + completed events count.
-3. Show the full badge list at the bottom.
+2. Show the stat cards: **8 badges** (after the AI workshop sync) + 7 completed events.
+3. Show the full badge list at the bottom — 6 history badges + 2 from today's workshop.
 4. Demonstrate editing the display name and clicking Save.
 
 ---
