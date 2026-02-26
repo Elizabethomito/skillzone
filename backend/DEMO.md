@@ -1,7 +1,26 @@
 # Skillzone — Local-Network Demo Runbook
 
 Use this guide to run the full end-to-end demo on a local Wi-Fi network
-(e.g. a hotspot from your laptop) with no internet required.
+(e.g. a hotspot from your laptop) with **no internet required**.
+
+---
+
+## Who does what during the demo
+
+You need **one laptop** (the server) and **two helpers** (or two browser
+windows on separate devices) to show the contrast between a veteran user and
+a newcomer.
+
+| Person | Device | What they do |
+|--------|--------|--------------|
+| **Presenter / operator** | Server laptop | Runs the Go backend + Vite dev server, seeds data, shows the host dashboard (TechCorp Africa), drives curl commands for the audience |
+| **Helper A — Amara** | Phone or second laptop | Opens `http://<SERVER_IP>:5173` in Chrome, signs in as `amara@student.test` — plays the veteran student with 6 badges |
+| **Helper B — Baraka** | Phone or second laptop | Opens `http://<SERVER_IP>:5173` in Chrome, signs in as `baraka@student.test` — plays the newcomer with zero history |
+
+> **Tip:** If you only have one laptop, open three Chrome profiles (or two
+> Incognito windows) and use them side-by-side.  The host session stays in
+> the main window; Amara and Baraka each get their own Incognito window so
+> their JWT cookies don't collide.
 
 ---
 
@@ -37,7 +56,9 @@ the Candidates search and give realistic badge/attendance counts:
 
 ---
 
-## Step 1 — Find your laptop's local IP
+## Step 1 — Find the server laptop's local IP
+
+Run this on the **server laptop**:
 
 ```bash
 # Linux / macOS
@@ -46,11 +67,12 @@ ip addr show | grep "inet " | grep -v 127.0.0.1
 ipconfig
 ```
 
-Note the address — something like `192.168.x.x`. You'll use it everywhere below.
+You'll see something like `192.168.x.x`. **Share this address with both helpers**
+so they can point their browsers at it.
 
 ---
 
-## Step 2 — Build and start the server
+## Step 2 — Build and start the server (server laptop only)
 
 ```bash
 cd /home/akihara/hackathons/skillzone/backend
@@ -60,19 +82,37 @@ ADDR=0.0.0.0:8080 JWT_SECRET=hackathon-demo ./skillzone
 ```
 
 > **Why `0.0.0.0`?**  The default `:8080` only listens on localhost.
-> `0.0.0.0:8080` listens on all interfaces, so phones and other laptops on
-> the same Wi-Fi can reach it.
+> `0.0.0.0:8080` listens on all interfaces so Helper A and Helper B can
+> reach the API over Wi-Fi.
 
 ---
 
-## Step 3 — Point the frontend at the backend
+## Step 3 — Point the frontend at the backend (server laptop only)
 
 ```bash
 cd /home/akihara/hackathons/skillzone/frontend
-VITE_API_URL=http://<YOUR_LAPTOP_IP>:8080 npm run dev -- --host
+VITE_API_URL=http://<SERVER_IP>:8080 npm run dev -- --host
 ```
 
-Other devices open: `http://<YOUR_LAPTOP_IP>:5173`
+The `--host` flag makes Vite listen on `0.0.0.0:5173` (not just localhost).
+
+**Helper A and Helper B** open this URL on their devices:
+```
+http://<SERVER_IP>:5173
+```
+
+They will see the Skillzone PWA. Chrome will offer an **Install** prompt
+(⊕ in the address bar) — accept it for the full standalone experience.
+
+**Sign-in credentials for the helpers:**
+
+| Helper | Email | Password |
+|--------|-------|----------|
+| Helper A (Amara) | `amara@student.test` | `demo1234` |
+| Helper B (Baraka) | `baraka@student.test` | `demo1234` |
+
+> The sign-in page has **click-to-fill** buttons for all three demo accounts —
+> helpers just tap their name and hit Sign In.
 
 ---
 

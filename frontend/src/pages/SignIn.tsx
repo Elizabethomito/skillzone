@@ -82,13 +82,34 @@ export default function SignIn() {
           </button>
         </form>
 
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          Demo accounts:{" "}
-          <code className="rounded bg-muted px-1">amara@student.test</code> or{" "}
-          <code className="rounded bg-muted px-1">host@techcorp.test</code> —
-          password{" "}
-          <code className="rounded bg-muted px-1">demo1234</code>
-        </p>
+        <div className="mt-5 rounded-xl border border-border bg-muted/40 px-4 py-3">
+          <p className="mb-2 text-center text-xs font-medium text-muted-foreground">
+            Demo accounts — click to fill
+          </p>
+          <div className="flex flex-col gap-1.5">
+            {[
+              { label: "Amara Osei", sub: "Veteran student · 6 badges", email: "amara@student.test" },
+              { label: "Baraka Mwangi", sub: "New student · no history", email: "baraka@student.test" },
+              { label: "TechCorp Africa", sub: "Company host", email: "host@techcorp.test" },
+            ].map(({ label, sub, email: demoEmail }) => (
+              <button
+                key={demoEmail}
+                type="button"
+                onClick={() => { setEmail(demoEmail); setPassword("demo1234"); setError(""); }}
+                className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-left text-xs transition hover:border-primary/60 hover:bg-primary/5"
+              >
+                <span>
+                  <span className="font-medium text-foreground">{label}</span>
+                  <span className="ml-1.5 text-muted-foreground">{sub}</span>
+                </span>
+                <code className="text-muted-foreground">{demoEmail}</code>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            All passwords: <code className="rounded bg-muted px-1">demo1234</code>
+          </p>
+        </div>
 
         <p className="mt-4 text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{" "}

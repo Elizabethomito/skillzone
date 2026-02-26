@@ -2,32 +2,65 @@
 
 > **Duration:** ~15 minutes end-to-end  
 > **Audience:** Hackathon judges, potential users  
-> **Setup required:** Backend running on `http://localhost:8080`, browser on Chrome/Chromium
+> **People needed:** 1 presenter (server laptop) + 2 helpers#### 6b — Simulate going offline (both helpers)
+
+1. On **each helper's device**, open **Chrome DevTools** (`F12`) → **Network** tab.
+2. Change the throttle dropdown from "No throttle" to **Offline**.
+3. The amber **"You're offline"** banner appears at the top of the page.
+
+> **What to say:** "The app detects the network loss and surfaces it immediately.
+> Events are still visible from the Dexie IndexedDB cache — no server call needed."
+
+#### 6c — Scan the QR code offline (both helpers)Baraka)
+
+---
+
+## Who does what
+
+| Person | Device | Role |
+|--------|--------|------|
+| **Presenter** | Server laptop | Runs backend + Vite, drives the host dashboard (TechCorp Africa), narrates |
+| **Helper A — Amara** | Phone or second laptop | Signs in as `amara@student.test` — veteran student, 6 badges |
+| **Helper B — Baraka** | Phone or second laptop | Signs in as `baraka@student.test` — newcomer, zero history |
+
+> **Solo mode:** Open the host session in a normal Chrome window and open two
+> Incognito windows for Amara and Baraka. Incognito windows have isolated
+> storage so the JWTs don't bleed across sessions.
 
 ---
 
 ## Prerequisites
 
-### 1 — Start the backend
+### 1 — Start the backend (server laptop)
 
 ```bash
 cd backend
-go run ./cmd/server
-# Server listening on :8080
+ADDR=0.0.0.0:8080 JWT_SECRET=hackathon-demo go run ./cmd/server
+# Listening on 0.0.0.0:8080
 ```
 
-### 2 — Start the frontend (dev server)
+> `0.0.0.0` makes the API reachable from every device on the same Wi-Fi.
+> Find the server's local IP with `ip addr show | grep "inet "` (Linux/macOS)
+> or `ipconfig` (Windows). Share `http://<SERVER_IP>:8080` with your helpers
+> if you want them to hit the raw API — usually the frontend URL below is enough.
+
+### 2 — Start the frontend (server laptop)
 
 ```bash
 cd frontend
-npm run dev
-# → http://localhost:5173
+VITE_API_URL=http://<SERVER_IP>:8080 npm run dev -- --host
+# → http://<SERVER_IP>:5173  (accessible from all devices on the network)
 ```
 
-> For a full PWA experience (service worker active in dev), the `vite.config.ts`
-> already sets `devOptions: { enabled: true }`. The SW is registered automatically.
+**Helper A and Helper B** open `http://<SERVER_IP>:5173` on their devices.
+The sign-in page has **click-to-fill buttons** — helpers tap their name,
+then tap **Sign In**. No typing needed.
 
-### 3 — Seed demo data
+> For a full PWA experience (service worker active in dev), the `vite.config.ts`
+> already sets `devOptions: { enabled: true }`. Chrome will show an **Install**
+> prompt (⊕ in the address bar) — accept it for the standalone app experience.
+
+### 3 — Seed demo data (server laptop, one time)
 
 ```bash
 curl -X POST http://localhost:8080/api/admin/seed
@@ -152,14 +185,18 @@ Leave this modal open on the host's screen (or a second monitor).
 
 ### Act 6 — Student Checks In Offline (The Core Demo)
 
-#### 6a — Open a second browser window as Amara
+#### 6a — Helper A (Amara) and Helper B (Baraka) open the app
 
-1. Open a new **Incognito window** (or a different browser profile).
-2. Navigate to `http://localhost:5173`.
-3. Sign In as `amara@student.test` / `demo1234`.
-4. Go to **Events**.
+Both helpers should already be signed in from the setup step.  If not:
 
-#### 6b — Simulate going offline
+1. Open `http://<SERVER_IP>:5173` on each device.
+2. Tap the **Amara Osei** or **Baraka Mwangi** quick-fill button on the sign-in page.
+3. Tap **Sign In**.
+
+Have both helpers navigate to **Events** — they can both see the
+"Building Apps with AI Workshop" card.
+
+#### 6b — Simulate going offline (both helpers)
 
 1. Open **Chrome DevTools** (`F12`) → **Network** tab.
 2. Change the throttle dropdown from "No throttle" to **Offline**.
@@ -168,31 +205,37 @@ Leave this modal open on the host's screen (or a second monitor).
 > **What to say:** "The app detects the network loss and surfaces it immediately.
 > The events are still visible from the Dexie IndexedDB cache."
 
-#### 6c — Scan the QR code offline
+#### 6c — Scan the QR code offline (both helpers)
 
-1. On Amara's browser (offline), click the **Scan QR** button on the AI Workshop card.
-2. The QR scanner modal opens using the device camera.
-3. Point the camera at the host's QR code displayed in the other window.
-4. The scanner decodes the JWT, extracts the `event_id`, and stores the record in IndexedDB.
-5. A toast notification appears: **"Check-in queued — will sync when online."**
+1. On **Amara's device** (offline), click **Scan QR** on the AI Workshop card.
+2. Point the camera at the host's QR code on the projector/laptop screen.
+3. Toast: **"Check-in queued — will sync when online."**
+4. Repeat on **Baraka's device** — same QR, same result.
 
-> **What to say:** "The check-in is captured and stored locally. The student is
-> done — they can put their phone away. No network needed."
+> **What to say:** "Both students captured their attendance locally.
+> Baraka was NOT pre-registered — the server will auto-register them
+> when the sync fires. No network needed to check in."
 
-#### 6d — Come back online and watch the sync fire
+#### 6d — Come back online and watch the sync fire (both helpers)
 
-1. In Chrome DevTools → Network tab → change back to **No throttle** (online).
+1. On **each helper's** DevTools → Network tab → change back to **No throttle**.
 2. Within 1–2 seconds, a toast appears: **"✓ Sync complete — 1 check-in verified."**
 
-> **What to say:** "The moment connectivity returns, the background sync engine
-> drains the queue automatically. The server verifies the JWT signature and
-> awards the skill badge."
+> **What to say:** "The moment connectivity returns, background sync drains
+> the queue automatically. The server verifies the JWT signature and awards
+> the skill badge — on both devices simultaneously."
 
-#### 6e — Verify the badge in the Dashboard
+#### 6e — Verify the badges
 
-1. On Amara's session, navigate to **Dashboard**.
-2. Under **Skill Badges**, the newly awarded badges ("AI Application Development",
-   "Prompt Engineering") appear.
+1. **Amara's device** → navigate to **Dashboard**.
+   Under **Skill Badges**: "AI Application Development" and "Prompt Engineering" appear.
+   She now has **8 badges** total.
+2. **Baraka's device** → navigate to **Dashboard**.
+   Under **Skill Badges**: "AI Application Development" — his **first ever badge**.
+
+> **What to say:** "This is the contrast we wanted to show. Amara's rich
+> history was already there. Baraka walked in with nothing — one QR scan
+> and one sync later, he has his first verified credential."
 
 ---
 
@@ -201,24 +244,24 @@ Leave this modal open on the host's screen (or a second monitor).
 > This demo requires **two student sessions** and the AI Product Internship
 > (capacity: 2, 1 slot already confirmed for Amara → 1 slot remaining).
 
-#### 7a — Both students register offline simultaneously
+#### 7a — Both helpers register offline simultaneously
 
-1. Put **both** student sessions offline (DevTools → Offline on each tab).
-2. On Amara's tab: click **Register** on the **AI Product Internship** card.
+1. Put **both helper devices** offline (DevTools → Offline on each).
+2. **Amara's device**: click **Register** on the **AI Product Internship** card.
    - Toast: "Registration queued offline."
-3. On Baraka's tab: click **Register** on the same card.
+3. **Baraka's device**: click **Register** on the same card.
    - Toast: "Registration queued offline."
 
 #### 7b — Bring Amara online first
 
-1. On Amara's DevTools → set back to No throttle.
+1. On **Amara's** DevTools → set back to No throttle.
 2. Sync fires — Amara gets the last slot (`confirmed`).
 
 #### 7c — Bring Baraka online
 
-1. On Baraka's DevTools → set back to No throttle.
-2. Baraka's sync fires — the slot is gone → registration lands as `conflict_pending`.
-3. A toast appears: "1 registration needs host review."
+1. On **Baraka's** DevTools → set back to No throttle.
+2. Baraka's sync fires — the slot is gone → `conflict_pending`.
+3. Toast: "1 registration needs host review."
 
 #### 7d — Host resolves the conflict
 
