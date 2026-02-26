@@ -2,7 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
-import { VitePWA } from "vite-plugin-pwa";
+import { VitePWA } from "vite-plugin-pwa";import basicSsl from '@vitejs/plugin-basic-ssl';
+
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -12,10 +13,17 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
       host: "localhost",
-    },
+    },proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8080', // Your Go backend
+        changeOrigin: true,
+        secure: false, // Don't verify SSL for the localhost proxy
+      }
+    }
   },
   plugins: [
     react(),
+    basicSsl(),
     mode === "development" && componentTagger(),
     VitePWA({
       registerType: "autoUpdate",

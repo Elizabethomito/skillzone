@@ -171,58 +171,113 @@ function CreateEditEventModal({ skills, existing, onClose, onSaved }: CreateEdit
   );
 }
 
-// ─── QR Display (Host) ────────────────────────────────────────────────────────
+// ─── Registration QR Modal (Host) ────────────────────────────────────────────
+// Encodes { type:"register", eventId } — generated fully client-side.
+// Students scan this with the Scan QR button to register for the event.
 
-function QRModal({ event, onClose }: { event: ApiEvent; onClose: () => void }) {
+function RegistrationQRModal({ event, onClose }: { event: ApiEvent; onClose: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [token, setToken] = useState("");
-  const [expiresIn, setExpiresIn] = useState(0);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiGetCheckinCode(event.id)
-      .then(async (res) => {
-        setToken(res.token);
-        setExpiresIn(res.expires_in_seconds);
-        const payload = JSON.stringify({ token: res.token });
-        if (canvasRef.current) {
-          await QRCode.toCanvas(canvasRef.current, payload, { width: 280, margin: 2 });
-        }
-      })
-      .catch(() => toast.error("Could not generate QR code"))
-      .finally(() => setLoading(false));
+    const payload = JSON.stringify({ type: "register", eventId: event.id });
+    if (canvasRef.current) {
+      QRCode.toCanvas(canvasRef.current, payload, {
+        width: 280,
+        margin: 2,
+        color: { dark: "#000000", light: "#ffffff" },
+      }).catch(() => toast.error("Could not generate QR code"));
+    }
   }, [event.id]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-background p-6 shadow-xl text-center">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">Check-in QR Code</h2>
+          <h2 className="text-lg font-bold">Registration QR Code</h2>
           <button onClick={onClose} className="rounded p-1 hover:bg-muted"><X className="h-5 w-5" /></button>
         </div>
-        <p className="mb-4 text-sm text-muted-foreground">{event.title}</p>
-        {loading ? (
-          <div className="flex h-[280px] items-center justify-center">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          </div>
-        ) : (
-          <canvas ref={canvasRef} className="mx-auto rounded-lg" />
-        )}
-        {expiresIn > 0 && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            <Clock className="mr-1 inline h-3 w-3" />
-            Valid for {Math.floor(expiresIn / 3600)} hours — display on projector screen
-          </p>
-        )}
-        <p className="mt-2 text-xs text-green-600 font-medium">
-          Students scan while offline — they sync later ✓
+        <p className="mb-1 text-sm font-medium text-foreground truncate">{event.title}</p>
+        <p className="mb-4 text-xs text-muted-foreground">Students scan this to register</p>
+        <canvas ref={canvasRef} className="mx-auto rounded-xl border border-border shadow-sm" />
+        <p className="mt-4 text-xs text-muted-foreground">
+          <Users className="mr-1 inline h-3 w-3" />
+          Show this to attendees — works offline ✓
         </p>
       </div>
     </div>
   );
 }
 
+// ─── Check-in QR Modal (Host, active events only) ─────────────────────────────
+// Encodes a signed JWT token from the backend. Students scan this during
+// the live event to record their physical attendance.
+
+function CheckInQRModal({ event, onClose }: { event: ApiEvent; onClose: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [expiresIn, setExpiresIn] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [jwtToken, setJwtToken] = useState<string | null>(null); // Add state for the token
+
+  // 1. Fetch the secure token from the Go backend
+  useEffect(() => {
+    apiGetCheckinCode(event.id)
+      .then((res) => {
+        setExpiresIn(res.expires_in_seconds);
+        setJwtToken(res.token); // Save it to state instead of drawing immediately
+      })
+      .catch(() => toast.error("Could not generate check-in QR code"))
+      .finally(() => setLoading(false));
+  }, [event.id]);
+
+  // 2. Draw the QR code ONLY after the canvas has mounted
+  useEffect(() => {
+    // If we are no longer loading, we have a token, and the canvas is on screen:
+    if (!loading && jwtToken && canvasRef.current) {
+      const payload = JSON.stringify({ token: jwtToken });
+      
+      QRCode.toCanvas(canvasRef.current, payload, {
+        width: 280,
+        margin: 2,
+        color: { dark: "#000000", light: "#ffffff" },
+      }).catch(() => toast.error("Failed to draw QR code"));
+    }
+  }, [loading, jwtToken]); // Re-run this effect when loading or token changes
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-2xl bg-background p-6 text-center shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-bold">Check-in QR Code</h2>
+          <button onClick={onClose} className="rounded p-1 hover:bg-muted"><X className="h-5 w-5" /></button>
+        </div>
+        <p className="mb-1 truncate text-sm font-medium text-foreground">{event.title}</p>
+        <p className="mb-4 text-xs text-muted-foreground">Students scan to record attendance</p>
+        
+        {loading ? (
+          <div className="flex h-[280px] items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          </div>
+        ) : (
+          <canvas ref={canvasRef} className="mx-auto rounded-xl border border-border shadow-sm" />
+        )}
+        
+        {expiresIn > 0 && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            <Clock className="mr-1 inline h-3 w-3" />
+            Valid for {Math.floor(expiresIn / 3600)} hour{Math.floor(expiresIn / 3600) !== 1 ? "s" : ""} — display on projector
+          </p>
+        )}
+        <p className="mt-2 text-xs font-medium text-green-600">
+          Students scan while offline — badges sync later ✓
+        </p>
+      </div>
+    </div>
+  );
+}
 // ─── QR Scanner (Student) ─────────────────────────────────────────────────────
+// Handles two QR payload types:
+//   { type: "register", eventId }  → enqueue a registration
+//   { token: "<jwt>" }             → enqueue an attendance check-in
 
 function QRScannerModal({ userId, onClose }: { userId: string; onClose: () => void }) {
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
@@ -243,28 +298,40 @@ function QRScannerModal({ userId, onClose }: { userId: string; onClose: () => vo
         scanner.clear().catch(() => {});
 
         try {
-          const payload = JSON.parse(decodedText) as { token: string };
-          if (!payload.token) throw new Error("missing token");
+          const payload = JSON.parse(decodedText) as
+            | { type: "register"; eventId: string }
+            | { token: string };
 
-          // Decode JWT payload (no verification — server verifies)
-          const parts = payload.token.split(".");
-          const claims = JSON.parse(atob(parts[1]));
-          const eventId: string = claims.event_id;
-
-          await enqueueCheckIn(userId, eventId, payload.token);
-          setResult(`✓ Check-in queued for event. Badges will appear when you reconnect.`);
-          toast.success("QR scanned! Check-in queued offline.");
-
-          // Attempt immediate sync if online
-          if (navigator.onLine) {
-            runSync(userId).catch(console.warn);
+          // ── Registration QR ─────────────────────────────────────────────
+          if ("type" in payload && payload.type === "register") {
+            if (!payload.eventId) throw new Error("missing eventId");
+            await enqueueRegister(userId, payload.eventId);
+            setResult("✓ Registration queued! Will confirm when you reconnect.");
+            toast.success("Registered via QR!");
+            if (navigator.onLine) runSync(userId).catch(console.warn);
+            return;
           }
+
+          // ── Check-in QR (signed JWT) ────────────────────────────────────
+          if ("token" in payload) {
+            if (!payload.token) throw new Error("missing token");
+            const parts  = payload.token.split(".");
+            const claims = JSON.parse(atob(parts[1]));
+            const eventId: string = claims.event_id;
+            await enqueueCheckIn(userId, eventId, payload.token);
+            setResult("✓ Check-in queued! Badges will appear when you reconnect.");
+            toast.success("QR scanned! Check-in queued.");
+            if (navigator.onLine) runSync(userId).catch(console.warn);
+            return;
+          }
+
+          throw new Error("unrecognised QR format");
         } catch (err) {
           setResult(`✗ Invalid QR code: ${err instanceof Error ? err.message : "unknown error"}`);
           toast.error("Invalid QR code");
         }
       },
-      (err) => { /* scan errors are normal (camera adjusting) */ }
+      () => { /* partial scan frames — normal */ }
     );
 
     scannerRef.current = scanner;
@@ -489,8 +556,9 @@ interface EventCardProps {
   online: boolean;
 }
 
-function EventCard({ event, isHost, isStudent, myRegistrationStatus, hasPendingQueue, onRefresh, userId, online }: EventCardProps) {
-  const [showQR, setShowQR]             = useState(false);
+function EventCard({ event, isHost, isStudent, myRegistrationStatus, onRefresh, userId, online }: EventCardProps) {
+  const [showRegQR, setShowRegQR]       = useState(false);
+  const [showCheckInQR, setShowCheckInQR] = useState(false);
   const [showScanner, setShowScanner]   = useState(false);
   const [showGuests, setShowGuests]     = useState(false);
   const [showEdit, setShowEdit]         = useState(false);
@@ -501,7 +569,7 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, hasPendingQ
   const isRegistered = !!myRegistrationStatus && myRegistrationStatus !== "rejected";
   const isRejected   = myRegistrationStatus === "rejected";
   // Show pending if we have an offline queue entry but no server status yet.
-  const isPendingOffline = hasPendingQueue && !myRegistrationStatus;
+  const isPendingOffline = !myRegistrationStatus;
 
   const changeStatus = async (status: "upcoming" | "active" | "completed") => {
     setBusy(true);
@@ -609,16 +677,27 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, hasPendingQ
         {isHost && (
           <>
             {event.status === "upcoming" && (
-              <button onClick={() => changeStatus("active")} disabled={busy}
-                className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
-                <Play className="h-3 w-3" /> Start
-              </button>
+              <>
+                <button onClick={() => changeStatus("active")} disabled={busy}
+                  className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                  <Play className="h-3 w-3" /> Start
+                </button>
+                {/* Registration QR available on upcoming events so host can share before going live */}
+                <button onClick={() => setShowRegQR(true)}
+                  className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+                  <QrCode className="h-3 w-3" /> Reg. QR
+                </button>
+              </>
             )}
             {event.status === "active" && (
               <>
-                <button onClick={() => setShowQR(true)}
+                <button onClick={() => setShowRegQR(true)}
                   className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90">
-                  <QrCode className="h-3 w-3" /> Show QR
+                  <QrCode className="h-3 w-3" /> Reg. QR
+                </button>
+                <button onClick={() => setShowCheckInQR(true)}
+                  className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700">
+                  <Scan className="h-3 w-3" /> Check-in QR
                 </button>
                 <button onClick={() => changeStatus("completed")} disabled={busy}
                   className="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50">
@@ -692,7 +771,12 @@ function EventCard({ event, isHost, isStudent, myRegistrationStatus, hasPendingQ
       </div>
 
       {/* Sub-modals */}
-      {showQR && <QRModal event={event} onClose={() => setShowQR(false)} />}
+      {showRegQR && (
+        <RegistrationQRModal event={event} onClose={() => setShowRegQR(false)} />
+      )}
+      {showCheckInQR && (
+        <CheckInQRModal event={event} onClose={() => setShowCheckInQR(false)} />
+      )}
       {showScanner && <QRScannerModal userId={userId} onClose={() => setShowScanner(false)} />}
       {showGuests && <ManageGuestsModal event={event} onClose={() => setShowGuests(false)} />}
       {showEdit && (
