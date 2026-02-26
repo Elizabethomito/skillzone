@@ -7,7 +7,6 @@ import {
   LogOut,
   Calendar,
   LayoutDashboard,
-  Award,
   Users,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -36,7 +35,6 @@ export default function Header() {
 
   const studentLinks: NavItem[] = [
     { to: "/events", label: "Events", icon: Calendar },
-    { to: "/skills", label: "Skills", icon: Award },
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/profile", label: "Profile", icon: User },
   ];
@@ -44,7 +42,6 @@ export default function Header() {
   const companyLinks: NavItem[] = [
     { to: "/events", label: "Events", icon: Calendar },
     { to: "/candidates", label: "Candidates", icon: Users },
-    { to: "/skills", label: "Skills", icon: Award },
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/profile", label: "Profile", icon: User },
   ];

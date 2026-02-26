@@ -126,6 +126,9 @@ const (
 	SeedEventCyberID      = "seed-event-cyber--0000-0000-0000-000000000505"
 	SeedEventAIWorkshopID = "seed-event-aiwork-0000-0000-0000-000000000506"
 	SeedEventInternshipID = "seed-event-intern-0000-0000-0000-000000000507"
+	// Advanced repeats — used to showcase duplicate badges on Amara's profile
+	SeedEventPython2ID  = "seed-event-pyth2--0000-0000-0000-000000000508"
+	SeedEventDataSci2ID = "seed-event-datas2-0000-0000-0000-000000000509"
 
 	// Events — GreenLeaf Agri
 	SeedEventSoilID       = "seed-event-soil---0000-0000-0000-000000000510"
@@ -318,6 +321,19 @@ func (s *Server) SeedDemo(w http.ResponseWriter, r *http.Request) {
 			now.AddDate(0, 0, -7), now.AddDate(0, 0, -7).Add(6 * time.Hour),
 			"completed", "past-ci-cyber", nil, nil,
 		},
+		// Advanced Python & Data Science repeats — Amara earned these badges a second time
+		{
+			SeedEventPython2ID, SeedCompanyID, "Advanced Python & API Design",
+			"Deep-dive into Python async programming, REST API design with FastAPI, and SQLAlchemy.", "Zone01 Kisumu Lab A",
+			now.AddDate(0, -1, -15), now.AddDate(0, -1, -15).Add(6 * time.Hour),
+			"completed", "past-ci-python2", nil, nil,
+		},
+		{
+			SeedEventDataSci2ID, SeedCompanyID, "ML Engineering Bootcamp",
+			"From notebooks to production: feature engineering, model serving, and MLOps fundamentals.", "Zone01 Kisumu Lab B",
+			now.AddDate(0, 0, -21), now.AddDate(0, 0, -21).Add(8 * time.Hour),
+			"completed", "past-ci-datasci2", nil, nil,
+		},
 		// TechCorp active + upcoming
 		{
 			SeedEventAIWorkshopID, SeedCompanyID, "Building Apps with AI Workshop",
@@ -426,6 +442,11 @@ func (s *Server) SeedDemo(w http.ResponseWriter, r *http.Request) {
 		{SeedEventAIWorkshopID, SeedSkillPromptID},
 		{SeedEventInternshipID, SeedSkillAIProdMgmtID},
 		{SeedEventInternshipID, SeedSkillProjectMgmtID},
+		// Advanced repeats
+		{SeedEventPython2ID, SeedSkillPythonID},
+		{SeedEventPython2ID, SeedSkillAPIDesignID},
+		{SeedEventDataSci2ID, SeedSkillDataSciID},
+		{SeedEventDataSci2ID, SeedSkillMLOpsID},
 		// GreenLeaf
 		{SeedEventSoilID, SeedSkillSoilScienceID},
 		{SeedEventClimateID, SeedSkillClimateAdaptID},
@@ -481,7 +502,7 @@ func (s *Server) SeedDemo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ── Amara — 6 past TechCorp events ───────────────────────────────────────
+	// ── Amara — 6 past TechCorp events + 2 advanced repeat-badge events ─────
 	insertHistory([]attEntry{
 		{SeedAmaraID, SeedEventPythonID, SeedSkillPythonID, "past-ci-python", now.AddDate(0, -3, 0).Add(2 * time.Hour)},
 		{SeedAmaraID, SeedEventDataSciID, SeedSkillDataSciID, "past-ci-datascience", now.AddDate(0, -2, 0).Add(3 * time.Hour)},
@@ -489,6 +510,11 @@ func (s *Server) SeedDemo(w http.ResponseWriter, r *http.Request) {
 		{SeedAmaraID, SeedEventCloudID, SeedSkillCloudID, "past-ci-cloud", now.AddDate(0, -1, 0).Add(1 * time.Hour)},
 		{SeedAmaraID, SeedEventMobileID, SeedSkillMobileID, "past-ci-mobile", now.AddDate(0, 0, -13)},
 		{SeedAmaraID, SeedEventCyberID, SeedSkillCyberID, "past-ci-cyber", now.AddDate(0, 0, -7).Add(2 * time.Hour)},
+		// Advanced repeat events — same skill badges earned a second time from different events
+		{SeedAmaraID, SeedEventPython2ID, SeedSkillPythonID, "past-ci-python2", now.AddDate(0, -1, -15).Add(3 * time.Hour)},
+		{SeedAmaraID, SeedEventPython2ID, SeedSkillAPIDesignID, "past-ci-python2", now.AddDate(0, -1, -15).Add(3 * time.Hour)},
+		{SeedAmaraID, SeedEventDataSci2ID, SeedSkillDataSciID, "past-ci-datasci2", now.AddDate(0, 0, -21).Add(4 * time.Hour)},
+		{SeedAmaraID, SeedEventDataSci2ID, SeedSkillMLOpsID, "past-ci-datasci2", now.AddDate(0, 0, -21).Add(4 * time.Hour)},
 	})
 	// Amara pre-registered for today's workshop
 	s.DB.ExecContext(r.Context(),

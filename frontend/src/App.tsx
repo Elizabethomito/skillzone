@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Toaster as HotToaster } from "react-hot-toast";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Header from "./components/Header";
@@ -17,7 +17,7 @@ import SignUp from "./pages/SignUp";
 import Events from "./pages/Events";
 import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
-import Skills from "./pages/Skills";
+import { PublicProfileView } from "./pages/Profile";
 import Candidates from "./pages/Candidates";
 import NotFound from "./pages/NotFound";
 import { setQueryClient } from "./lib/sync";
@@ -32,6 +32,13 @@ function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
   if (loading) return null;
   if (user) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
+}
+
+/** Thin wrapper so useParams works inside BrowserRouter. */
+function PublicProfileWrapper() {
+  const { id } = useParams<{ id: string }>();
+  if (!id) return <Navigate to="/" replace />;
+  return <PublicProfileView userId={id} />;
 }
 
 const App = () => (
@@ -106,11 +113,11 @@ const App = () => (
                 />
                 <Route
                   path="/skills"
-                  element={
-                    <ProtectedRoute>
-                      <Skills />
-                    </ProtectedRoute>
-                  }
+                  element={<Navigate to="/events" replace />}
+                />
+                <Route
+                  path="/profile/:id"
+                  element={<PublicProfileWrapper />}
                 />
                 <Route
                   path="/candidates"

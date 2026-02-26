@@ -226,8 +226,8 @@ func TestSeedDemo_EventCount(t *testing.T) {
 	runSeed(t, srv)
 
 	total := dbInt(t, srv, `SELECT COUNT(*) FROM events`)
-	if total != 18 {
-		t.Errorf("expected 18 events (8 TechCorp + 5 GreenLeaf + 5 MedConnect), got %d", total)
+	if total != 20 {
+		t.Errorf("expected 20 events (10 TechCorp + 5 GreenLeaf + 5 MedConnect), got %d", total)
 	}
 }
 
@@ -240,7 +240,7 @@ func TestSeedDemo_EventsPerCompany(t *testing.T) {
 		name      string
 		want      int
 	}{
-		{SeedCompanyID, "TechCorp Africa", 8},
+		{SeedCompanyID, "TechCorp Africa", 10},
 		{SeedGreenLeafID, "GreenLeaf Agri", 5},
 		{SeedMedConnectID, "MedConnect Health", 5},
 	}

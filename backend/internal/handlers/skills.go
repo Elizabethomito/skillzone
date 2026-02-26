@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -178,6 +180,93 @@ func (s *Server) SearchStudents(w http.ResponseWriter, r *http.Request) {
 		students = []StudentWithSkills{}
 	}
 	respond(w, http.StatusOK, students)
+}
+
+// GetUserPublicProfile handles GET /api/users/{id}/profile  (public, no auth)
+//
+// Returns a student's public-facing profile: name, email, and their verified
+// skill badges with the event title, event date, and host name for each award.
+// This is designed to be shareable with job recruiters for skill verification.
+func (s *Server) GetUserPublicProfile(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+
+	// Load basic user info (students only — companies have no badges).
+	var u models.User
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT id, name, email, role FROM users WHERE id = ? AND role = 'student'`, userID,
+	).Scan(&u.ID, &u.Name, &u.Email, &u.Role)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	// Load verified skill badges with event and host details.
+	rows, err := s.DB.QueryContext(r.Context(),
+		`SELECT us.id, us.skill_id, us.event_id, us.awarded_at,
+		        sk.name, sk.description,
+		        e.title, e.start_time, e.end_time, e.location,
+		        h.id, h.name, h.email
+		 FROM user_skills us
+		 JOIN skills sk ON sk.id = us.skill_id
+		 JOIN events  e  ON e.id  = us.event_id
+		 JOIN users   h  ON h.id  = e.host_id
+		 WHERE us.user_id = ?
+		 ORDER BY us.awarded_at DESC`, userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer rows.Close()
+
+	type BadgeWithContext struct {
+		ID         string    `json:"id"`
+		SkillID    string    `json:"skill_id"`
+		SkillName  string    `json:"skill_name"`
+		SkillDesc  string    `json:"skill_description"`
+		EventID    string    `json:"event_id"`
+		EventTitle string    `json:"event_title"`
+		EventStart time.Time `json:"event_start"`
+		EventEnd   time.Time `json:"event_end"`
+		EventLoc   string    `json:"event_location"`
+		HostID     string    `json:"host_id"`
+		HostName   string    `json:"host_name"`
+		HostEmail  string    `json:"host_email"`
+		AwardedAt  time.Time `json:"awarded_at"`
+	}
+
+	var badges []BadgeWithContext
+	for rows.Next() {
+		var b BadgeWithContext
+		if err := rows.Scan(
+			&b.ID, &b.SkillID, &b.EventID, &b.AwardedAt,
+			&b.SkillName, &b.SkillDesc,
+			&b.EventTitle, &b.EventStart, &b.EventEnd, &b.EventLoc,
+			&b.HostID, &b.HostName, &b.HostEmail,
+		); err != nil {
+			respondError(w, http.StatusInternalServerError, "scan error")
+			return
+		}
+		badges = append(badges, b)
+	}
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "rows error")
+		return
+	}
+	if badges == nil {
+		badges = []BadgeWithContext{}
+	}
+
+	respond(w, http.StatusOK, map[string]any{
+		"id":     u.ID,
+		"name":   u.Name,
+		"email":  u.Email,
+		"role":   u.Role,
+		"badges": badges,
+	})
 }
 
 // skillIDsToInterfaces converts []string to []interface{} for variadic SQL args.
